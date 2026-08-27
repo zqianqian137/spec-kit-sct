@@ -33,6 +33,8 @@ intentionally omitted — this workflow has no commit step.)
 
 ## Installation
 
+### Extension (commands + hooks + scripts)
+
 Install the released extension from its GitHub archive:
 
 ```bash
@@ -44,6 +46,19 @@ Or install from a local checkout during development:
 ```bash
 specify extension add --dev /path/to/spec-kit-sct
 ```
+
+### Companion preset (lightweight command overrides)
+
+If you only want the SCT-flavored `speckit.specify` / `speckit.plan` /
+`speckit.implement` / `speckit.constitution` command overrides without the full
+extension machinery, add the companion preset:
+
+```bash
+specify preset add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.0.zip
+```
+
+The preset lives in `presets/sct/` and requires the `sct` extension (or can be
+used standalone for terminology-only projects).
 
 > 已指向真实仓库 `zqianqian137/spec-kit-sct`。catalog 的 `documentation` /
 > `download_url` / `homepage` 均指向该仓库，发布时无需再替换。

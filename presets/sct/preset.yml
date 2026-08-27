@@ -1,0 +1,32 @@
+schema_version: "1.0"
+preset:
+  id: sct
+  name: "SCT (Spec-Code-Test Consistency)"
+  version: "1.0.0"
+  description: "Preset for projects adopting SCT methodology. Overrides default Speckit commands to include acceptance.yaml and consistency checks. Works alongside the sct extension."
+  author: ai-test-platform-team
+  repository: https://github.com/zqianqian137/spec-kit-sct
+  license: MIT
+  tags:
+    - "sct"
+    - "consistency"
+    - "test-automation"
+    - "ai-assisted"
+  requires:
+    speckit_version: ">=0.9.0"
+    extensions:
+      - sct
+  overrides:
+    commands:
+      speckit.specify:
+        file: commands/speckit.specify.md
+        description: "(SCT) Same as core, but appends a hint to generate acceptance.yaml"
+      speckit.plan:
+        file: commands/speckit.plan.md
+        description: "(SCT) Same as core, but enforces data-model.md + api-contracts.md outputs for SoT merge"
+      speckit.implement:
+        file: commands/speckit.implement.md
+        description: "(SCT) Same as core, but invokes speckit.sct.codegen before and speckit.sct.check after"
+      speckit.constitution:
+        file: commands/speckit.constitution.md
+        description: "(SCT) Adds the Spec-Code-Test consistency principle to the constitution"
