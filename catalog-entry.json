@@ -22,7 +22,19 @@
   },
   "provides": {
     "commands": 5,
-    "hooks": 4
+    "hooks": 4,
+    "presets": [
+      {
+        "id": "sct",
+        "path": "presets/sct/preset.yml",
+        "overrides": [
+          "speckit.specify",
+          "speckit.plan",
+          "speckit.implement",
+          "speckit.constitution"
+        ]
+      }
+    ]
   },
   "tags": [
     "sct",
