@@ -95,18 +95,37 @@ def cmd_codegen(args) -> int:
 
     接受 --target：backend/all 走 acceptance-codegen；
     frontend/e2e 由 speckit.sct.e2e（change-impact-e2e-bridge）负责，此处不重复。
+
+    自动探测代码根目录并透传 --code，使规则测试能在代码上做离线静态断言。
     """
     spec = args.spec or _latest_spec()
     out = args.out or (Path(spec).parent / "tests" / "generated")
     target = (args.target or "all").lower()
     if target in ("backend", "all"):
-        return run_script("acceptance-codegen.py", [
-            "--spec", spec,
-            "--out", str(out),
-        ])
+        code_root = _detect_code_root(spec)
+        cli = ["--spec", spec, "--out", str(out)]
+        if code_root:
+            cli += ["--code", str(code_root)]
+        return run_script("acceptance-codegen.py", cli)
     print(f"⚠️  codegen target={target} 不由 acceptance-codegen 处理"
           f"（前端/E2E 请走 speckit.sct.e2e）", file=sys.stderr)
     return 0
+
+
+def _detect_code_root(spec) -> Path | None:
+    """探测代码根目录（覆盖 Maven/前端/混合布局）；找不到返回 None"""
+    spec_path = Path(spec).resolve()
+    project_root = spec_path.parent.parent  # specs/<feature>/ → project root
+    candidates = [
+        "src", "app/src/main", "frontend/src",
+        "backend/src/main/java", "src/main/java", "main/java",
+    ]
+    for cand in candidates:
+        p = project_root / cand
+        if p.exists():
+            return p
+    # 兜底：直接返回常见默认相对路径（生成的测试会在运行时按 SCT_CODE_ROOT 解析）
+    return Path("backend/src/main/java")
 
 
 def cmd_check(args) -> int:

@@ -97,6 +97,37 @@ The `--ai` flag on `merge` and `check` requires `SILICONFLOW_API_KEY`
 enriches the reverse trace via semantic code search (otherwise it falls back to
 a ripgrep static scan).
 
+## Making rule tests truly executable (no more empty skeletons)
+
+`test_rules.py` is generated as an **offline static assertion** — it verifies that
+every business rule registered in the SoT has a corresponding piece of evidence in
+the code (annotation / method / exception / constant), without starting any service.
+To make a rule's assertion precise, add a `checks` list to the rule in your SoT
+(`acceptance.yaml` or an `--api-contracts` YAML):
+
+```yaml
+rules:
+  - id: BR-001
+    text: 单次导入不超过 1000 条用例
+    priority: P0
+    checks:
+      - kind: annotation          # 在代码中应出现该注解
+        target: BatchImportRequest # 可选：限定文件名/类名以缩小扫描范围
+        expect: "@Max(1000)"
+      - kind: exception           # 应抛出该异常类
+        expect: "BatchSizeExceededException"
+```
+
+`kind` may be `annotation` / `method` / `exception` / `constant` / `text`.
+`codegen` receives the code root via `--code` (the `after_implement` hook auto-detects
+it; you can also override at runtime with env `SCT_CODE_ROOT`).
+
+If a rule has **no `checks`**, codegen falls back to a best-effort loose text match;
+if that still finds nothing, the test **fails clearly** (telling you to add `checks`)
+instead of being silently skipped. Acceptance scenarios are end-to-end journeys and
+are validated at the API / E2E layers, so `test_scenarios.py` fails with a clear
+pointer rather than a false green.
+
 ## Notes
 
 - Tests are **write-once**: change the SoT, then regenerate — do not hand-edit

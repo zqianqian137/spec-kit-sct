@@ -20,3 +20,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Optional `codebase-memory-mcp` integration for enriched impact reverse tracing.
 - Brownfield incremental mode, CodeGraph-driven request enrichment, full
   exception-value coverage, and multi-dimensional impact matching.
+
+### Changed
+- `test_rules.py` is no longer an empty skeleton: each business rule is now
+  generated as an **offline static assertion** that verifies the rule has a
+  corresponding piece of evidence in the code (annotation / method / exception /
+  constant). Rules can carry a `checks` list in the SoT for precise assertions;
+  anchorless rules fail clearly instead of being silently skipped.
+- `test_scenarios.py` now fails with a clear pointer (API / E2E layers) instead of
+  a false-green `NotImplementedError`.
+- `speckit.sct.codegen` accepts `--code` (code root for rule assertions); the
+  `after_implement` hook auto-detects it (override with env `SCT_CODE_ROOT`).

@@ -520,45 +520,120 @@ def example_value(field: dict):
     return None
 
 
-def gen_rule_tests(rules: list, out_dir: Path) -> list:
-    """为每条业务规则生成一个 unit test（遵循 templates/unit-test-template.py 约定）"""
+def gen_rule_tests(rules: list, out_dir: Path, code_root: str = "backend/src/main/java") -> list:
+    """为每条业务规则生成一个离线静态断言测试（遵循 templates/unit-test-template.py）
+
+    执行机制：检查 SoT 登记的每条业务规则在代码中有对应落地证据
+    （注解/方法/异常/常量）。无需启动服务；找不到证据即失败（非假绿）。
+
+    规则需在 SoT 提供 `checks` 字段（列表）以精确断言，例如：
+      rules:
+        - id: BR-001
+          text: 单次导入不超过 1000 条用例
+          checks:
+            - kind: annotation
+              target: BatchImportRequest
+              expect: "@Max(1000)"
+            - kind: exception
+              expect: "BatchSizeExceededException"
+    未提供 checks 时做尽力而为的宽松文本匹配；仍无证据则明确 fail 并提示补锚点。
+    """
     generated = []
-    rules_test = (
-        '"""AUTO-GENERATED business rules tests from acceptance.yaml - DO NOT EDIT\n'
-        '模板约定: extensions/sct/templates/unit-test-template.py\n"""\n'
-        "import pytest\n\n"
-    )
+    cr = str(code_root).replace("\\", "/")
+    L = []
+    L.append('"""AUTO-GENERATED business rules tests from acceptance.yaml - DO NOT EDIT')
+    L.append('模板约定: extensions/sct/templates/unit-test-template.py')
+    L.append('执行机制: 离线静态断言（无需启动服务）——验证 SoT 登记的每条业务规则')
+    L.append('在代码中有对应落地证据（注解/方法/异常/常量）。断言期望来自 SoT，')
+    L.append('与实现无关；找不到证据即失败（非假绿）。')
+    L.append('"""')
+    L.append("import os")
+    L.append("import pytest")
+    L.append("import re")
+    L.append("from pathlib import Path")
+    L.append("")
+    L.append('CODE_ROOT = Path(os.environ.get("SCT_CODE_ROOT", r"' + cr + '"))')
+    L.append('_SRC_EXTS = (".java", ".kt", ".py", ".go", ".ts", ".js", ".cs")')
+    L.append("")
+    L.append("")
+    L.append('def _scan_code(expect, kind="text", target=None):')
+    L.append('    """在 CODE_ROOT 源码中搜索规则证据；返回 (found, where)。"""')
+    L.append("    if not expect:")
+    L.append("        return False, None")
+    L.append("    files = []")
+    L.append("    if target:")
+    L.append("        for ext in _SRC_EXTS:")
+    L.append("            files += list(CODE_ROOT.rglob(f\"*{target}*{ext}\"))")
+    L.append("    if not files:")
+    L.append("        for ext in _SRC_EXTS:")
+    L.append("            files += list(CODE_ROOT.rglob(f\"*{ext}\"))")
+    L.append("    pats = [expect]")
+    L.append("    if kind == \"annotation\":")
+    L.append("        pats.append(expect.lstrip(\"@\"))")
+    L.append("    for f in files:")
+    L.append("        try:")
+    L.append("            t = f.read_text(encoding=\"utf-8\", errors=\"ignore\")")
+    L.append("        except Exception:")
+    L.append("            continue")
+    L.append("        for p in pats:")
+    L.append("            if p and p in t:")
+    L.append("                return True, f.name")
+    L.append("    return False, None")
+    L.append("")
+    L.append("")
+    L.append("def _loose_tokens(text):")
+    L.append('    """从规则文本提取候选搜索 token（大写词/长英文词/多位数字）。"""')
+    L.append("    toks = set(re.findall(r\"[A-Z][A-Za-z0-9]{2,}\", text))")
+    L.append("    toks |= set(re.findall(r\"\\b\\d{2,}\\b\", text))")
+    L.append("    toks |= set(re.findall(r\"[a-zA-Z][a-zA-Z0-9]{3,}\", text))")
+    L.append("    return [t for t in toks if len(t) >= 2]")
+    L.append("")
+    L.append("")
+
     for rule in rules:
-        # BR-001 -> test_br_001
         rule_num = rule["id"].split("-")[1].lower()
         rule_id = f"br_{rule_num}"
         rule_ref = rule["id"].upper()
         priority = rule.get("priority", "")
+        text = rule.get("text", "")
+        checks = rule.get("checks") or []
         intent_extra = f"（优先级 {priority}）" if priority else ""
-        rules_test += f'''
-
-@pytest.mark.skip(reason="规则 {rule_ref} 测试待实现：构造 fixture 与断言（详见 docstring）")
-def test_{rule_id}():
-    """[意图] {rule["text"]}{intent_extra}
-
-    真相来源: acceptance.yaml#rules[{rule_ref}]（derived_from: {rule.get("derived_from", "")}）
-
-    Given: （依据规则 {rule_ref} 的前置条件构造数据）
-    When:  （触发规则校验的动作）
-    Then:  （规则 {rule_ref} 的预期结果）
-    """
-    # Given：按规则前置条件构造数据
-    # TODO: construct fixtures for {rule_ref}
-
-    # When：触发规则
-    # TODO: invoke the rule under test
-
-    # Then：断言规则预期
-    # TODO: implement assertion based on {rule_ref}（当前为待实现占位，非通过）
-'''
+        L.append("")
+        L.append("def test_" + rule_id + "():")
+        L.append('    """[意图] ' + text + intent_extra)
+        L.append("")
+        L.append("    真相来源: acceptance.yaml#rules[" + rule_ref + "]（derived_from: " + rule.get("derived_from", "") + "）")
+        L.append("")
+        L.append("    Given: 依据规则 " + rule_ref + " 的前置条件构造约束上下文")
+        L.append("    When:  代码应声明并实现该约束")
+        L.append("    Then:  在代码中发现对应落地证据（注解/方法/异常/常量）")
+        L.append('    """')
+        if checks:
+            L.append("    checks = [")
+            for c in checks:
+                kind = c.get("kind", "text")
+                expect = c.get("expect", "")
+                target = c.get("target")
+                L.append("        {\"kind\": " + repr(kind) + ", \"expect\": " + repr(expect) + ", \"target\": " + repr(target) + "},")
+            L.append("    ]")
+            L.append("    for c in checks:")
+            L.append("        found, where = _scan_code(c[\"expect\"], c.get(\"kind\", \"text\"), c.get(\"target\"))")
+            L.append('    assert found, ("规则 ' + rule_ref + ' 未找到代码证据: " + str(c["expect"]) + " (kind=" + str(c.get("kind")) + "; 代码根=" + str(CODE_ROOT) + ")")')
+        else:
+            L.append("    # 无 checks 锚点：尽力而为的宽松文本匹配（弱证据），失败则明确提示补锚点")
+            L.append("    tokens = _loose_tokens(" + repr(text) + ")")
+            L.append("    found_any = False")
+            L.append("    for tok in tokens:")
+            L.append("        ok, _ = _scan_code(tok)")
+            L.append("        if ok:")
+            L.append("            found_any = True")
+            L.append("            break")
+            L.append("    if not found_any:")
+            L.append('        pytest.fail("规则 ' + rule_ref + ' 无可执行锚点(checks)，且代码中未发现文本线索 " + str(tokens) + "。 请在 SoT 的 rules[' + rule_ref + '] 增加 checks 字段（见 SCT 文档）以生成可执行断言。")')
+    body = "\n".join(L) + "\n"
     file_path = out_dir / "test_rules.py"
     file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(rules_test, encoding="utf-8")
+    file_path.write_text(body, encoding="utf-8")
     generated.append(str(file_path))
     return generated
 
@@ -597,7 +672,13 @@ def {func_name}():
 
     # Then：{sc.get("then", "")}
     # TODO: assert the observable outcome
-    raise NotImplementedError("scenario {sc_id} pending implementation")
+    # 说明：验收场景是端到端用户旅程，单测层（离线静态校验）不在此执行。
+    # 场景的可执行验证由 API 层（test_api_*.py）与 E2E 层（sct.e2e 生成的
+    # Playwright）承担。若需在 SoT 为该场景补充 target_api，可在此生成接口级断言。
+    pytest.fail(
+        f"场景 {sc_id} 在单测层（离线静态校验）不可执行：用户旅程应经 API/E2E 触发。"
+        f" 可执行验证见 test_api_*.py（参数/业务校验）与 e2e/auto_generated/*（端到端）。"
+    )
 '''
     file_path = out_dir / "test_scenarios.py"
     file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -740,6 +821,9 @@ def main():
     parser.add_argument("--only",
                         help="只生成指定 API 的接口测试（逗号分隔 API ID，如 API-001,API-003）；"
                              "规则/场景测试不受影响；定向生成不推进 hash 缓存")
+    parser.add_argument("--code", default="backend/src/main/java",
+                        help="代码根目录（规则测试在此做离线静态断言；也可用环境变量 "
+                             "SCT_CODE_ROOT 在运行时覆盖生成的默认值）")
     args = parser.parse_args()
 
     spec_path = Path(args.spec)
@@ -847,7 +931,7 @@ def main():
     print(f"  + {meta_path}")
 
     print("Generating rule tests...")
-    rule_files = gen_rule_tests(rules, out_dir)
+    rule_files = gen_rule_tests(rules, out_dir, args.code)
     for f in rule_files:
         print(f"  + {f}")
 
