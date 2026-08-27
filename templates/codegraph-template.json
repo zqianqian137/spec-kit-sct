@@ -1,0 +1,68 @@
+{
+  "$comment": "CodeGraph 交换格式契约（SCT codegen 消费）| 版本 1.0 | 生成方：对接方的 CodeGraph / codebase 分析工具 | 消费方：extensions/sct/scripts/acceptance-codegen.py --codegraph | 用途：用真实代码的接口签名（DTO 字段/类型/约束/枚举）增强测试生成；无此文件时 codegen 降级为纯 SoT 骨架生成 | 匹配规则：method+path 归一化比对（{id} 与 :id 等价，/api 前缀忽略）",
+  "schema_version": "1.0",
+  "generated_at": "2026-01-01T00:00:00",
+  "generator": "your-codegraph-tool v1.0",
+  "project": {
+    "base_url": "http://localhost:8080",
+    "framework": "spring-boot"
+  },
+  "$global_exceptions_comment": "系统级异常（@ControllerAdvice/@RestControllerAdvice 全局异常处理器登记的错误码），全接口适用。codegen 会写入测试文件头部与 COVERAGE_REPORT，供人工审查系统异常值全集；不可自动触发的（如 401 需无 token、500 需故障注入）不生成用例，由安全/框架测试覆盖",
+  "global_exceptions": [
+    { "status": 400, "code": "VALIDATION_FAILED", "message": "参数校验失败", "exception": "MethodArgumentNotValidException", "source": "GlobalExceptionHandler" },
+    { "status": 401, "code": "UNAUTHORIZED", "message": "未认证", "exception": "UnauthorizedException", "source": "GlobalExceptionHandler" },
+    { "status": 404, "code": "NOT_FOUND", "message": "资源不存在", "exception": "NoSuchResourceException", "source": "GlobalExceptionHandler" },
+    { "status": 409, "code": "DUPLICATE", "message": "资源重复", "exception": "DuplicateException", "source": "GlobalExceptionHandler" },
+    { "status": 500, "code": "INTERNAL_ERROR", "message": "系统内部错误", "exception": "Exception", "source": "GlobalExceptionHandler" }
+  ],
+  "apis": [
+    {
+      "method": "POST",
+      "path": "/api/batch-tasks",
+      "controller": "BatchTaskController",
+      "service": "BatchTaskService",
+      "request_dto": {
+        "name": "BatchTaskCreateRequest",
+        "fields": [
+          {
+            "name": "fileName",
+            "type": "String",
+            "required": true,
+            "constraints": ["@NotNull", "@NotBlank"],
+            "example": "tasks.csv",
+            "description": "CSV 文件名"
+          },
+          {
+            "name": "count",
+            "type": "Integer",
+            "required": false,
+            "constraints": ["@Max(1000)"],
+            "example": 2,
+            "min": 1,
+            "max": 1000,
+            "description": "导入条数"
+          },
+          {
+            "name": "mode",
+            "type": "String",
+            "required": true,
+            "constraints": ["@NotNull"],
+            "enum": ["APPEND", "OVERWRITE"],
+            "example": "APPEND",
+            "description": "导入模式"
+          }
+        ]
+      },
+      "response_dto": {
+        "name": "BatchTaskResponse",
+        "fields": [
+          { "name": "taskId", "type": "String", "required": true, "example": "bt-000123" },
+          { "name": "status", "type": "String", "enum": ["PENDING", "RUNNING", "DONE"], "example": "PENDING" }
+        ]
+      },
+      "service_dependencies": [
+        { "bean": "batchTaskService", "class": "BatchTaskService", "methods": ["create", "checkDuplicate"] }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+schema_version: "1.0"
+
+extension:
+  id: sct
+  name: "Spec-Code-Test Consistency (SCT)"
+  version: "1.0.0"
+  description: "Speckit extension implementing the SCT methodology: a single source of truth (acceptance.yaml), auto-generated write-once tests, three-way spec↔code↔test consistency checks, and change-impact / tier-gated workflows."
+  author: zqianqian137
+  repository: https://github.com/zqianqian137/spec-kit-sct
+  homepage: https://github.com/zqianqian137/spec-kit-sct
+  license: MIT
+
+requires:
+  speckit_version: ">=0.9.0"
+  tools:
+    # Optional soft dependency: when the codebase-memory-mcp connector is connected,
+    # sct.impact enriches the reverse trace (call-chain / DTO resolution) via semantic
+    # code search. The extension works without it (falls back to ripgrep static scan).
+    - name: codebase-memory-mcp
+      required: false
+      description: "Optional code knowledge graph for enriched change-impact reverse tracing."
+
+provides:
+  commands:
+    # ====== 5 core commands (SCT main pipeline + AI innovation) ======
+    - name: speckit.sct.merge
+      file: commands/speckit.sct.merge.md
+      description: "Merge spec/plan/data-model/api-contracts into acceptance.yaml (single source of truth). Supports --ai for LLM auto-extraction of acceptance scenarios."
+    - name: speckit.sct.codegen
+      file: commands/speckit.sct.codegen.md
+      description: "Derive unit/e2e tests from acceptance.yaml. Tests are write-once (manual edits disallowed)."
+    - name: speckit.sct.check
+      file: commands/speckit.sct.check.md
+      description: "Three-way consistency check: spec <-> code <-> test. Supports --ai for LLM semantic (soft-drift) analysis."
+    - name: speckit.sct.impact
+      file: commands/speckit.sct.impact.md
+      description: "Reverse-trace code changes to affected spec scenarios. Outputs change-impact.md with P0/P1/P2 and a L1/L2/L3 tier decision."
+    - name: speckit.sct.e2e
+      file: commands/speckit.sct.e2e.md
+      description: "Bridge change-impact.md + acceptance.yaml into Playwright e2e auto-regression scripts."
+
+  hooks:
+    # ====== 4 hook points (v2: impact moved to after_implement; no before_commit) ======
+    # Sequence is the canonical SCT Spec->Code->Test order. Both impact and check hang on
+    # after_implement, in order: impact (reverse-trace the just-written code) -> check
+    # (three-way consistency). The project has no git-commit flow, so before_commit is removed.
+    after_implement:
+      - id: sct_impact
+        enabled: true
+        optional: false
+        extension: "sct"
+        command: "speckit.sct.impact"
+        description: "Post-implementation change impact analysis (reverse-trace code -> affected spec scenarios); tier gate (L1 fast path) still applies"
+      - id: sct_check
+        enabled: true
+        optional: false
+        extension: "sct"
+        command: "speckit.sct.check"
+        description: "Three-way consistency check after implementation; first triggers deferred test generation (code is final)"
+    after_plan:
+      - id: sct_merge
+        enabled: true
+        optional: true
+        extension: "sct"
+        command: "speckit.sct.merge"
+        description: "Suggest generating acceptance.yaml (SoT) from plan outputs"
+    after_e2e:
+      - id: sct_bridge
+        enabled: true
+        optional: true
+        extension: "sct"
+        command: "speckit.sct.e2e"
+        description: "Generate Playwright scripts from change impact for auto-regression"
+
+tags:
+  - "sct"
+  - "spec-code-test"
+  - "consistency"
+  - "test-automation"
+  - "ai-assisted"
+  - "methodology"
+  - "change-impact"

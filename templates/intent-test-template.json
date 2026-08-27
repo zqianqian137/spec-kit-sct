@@ -1,0 +1,33 @@
+{
+  "$comment": "意图驱动测试导出模板（SCT 阶段 5 产物）| 生成器: change-impact-e2e-bridge.py | 落盘: e2e/auto_generated/_intent_tests.json | 用途: 功能测试案例对接 UI 自动化测试平台，平台按 intent + Given/When/Then 驱动执行与编排",
+  "export_version": "1.0",
+  "generated_at": "2026-01-01T00:00:00",
+  "source_spec": "specs/001-batch-import/acceptance.yaml",
+  "impact_source": "change-impact.md",
+  "test_type": "intent-driven-ui",
+  "cases": [
+    {
+      "id": "F001-1",
+      "feature_id": "F001",
+      "feature_name": "批量导入测试任务",
+      "priority": "P0",
+      "intent": "已登录且拥有导入权限的用户，上传包含 2 条合法用例的 CSV 文件，应创建批量任务并返回 taskId，状态为 PENDING",
+      "given": "已登录且拥有导入权限的用户",
+      "when": "上传包含 2 条合法用例的 CSV 文件",
+      "then": "创建批量任务，返回 taskId，状态为 PENDING",
+      "pre_steps": ["login", "navigate:/batch/import"],
+      "action": {
+        "type": "upload_file",
+        "selector": "input[type=file]",
+        "file_ref": "fixtures/tasks.csv"
+      },
+      "assertion": {
+        "type": "ui_message",
+        "text": "导入成功",
+        "timeout": 5000
+      },
+      "automation_script": "F001-1.spec.js",
+      "tags": ["regression", "batch-import"]
+    }
+  ]
+}

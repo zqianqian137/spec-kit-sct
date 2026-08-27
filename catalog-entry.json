@@ -1,0 +1,36 @@
+{
+  "name": "Spec-Code-Test Consistency (SCT)",
+  "id": "sct",
+  "version": "1.0.0",
+  "description": "Speckit extension implementing the SCT methodology: a single source of truth (acceptance.yaml), auto-generated write-once tests, three-way spec<->code<->test consistency checks, and change-impact / tier-gated workflows.",
+  "author": "zqianqian137",
+  "download_url": "https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.0.zip",
+  "repository": "https://github.com/zqianqian137/spec-kit-sct",
+  "homepage": "https://github.com/zqianqian137/spec-kit-sct",
+  "documentation": "https://github.com/zqianqian137/spec-kit-sct/blob/v1.0.0/README.md",
+  "changelog": "https://github.com/zqianqian137/spec-kit-sct/blob/v1.0.0/CHANGELOG.md",
+  "license": "MIT",
+  "requires": {
+    "speckit_version": ">=0.9.0",
+    "tools": [
+      {
+        "name": "codebase-memory-mcp",
+        "required": false,
+        "description": "Optional code knowledge graph for enriched change-impact reverse tracing."
+      }
+    ]
+  },
+  "provides": {
+    "commands": 5,
+    "hooks": 4
+  },
+  "tags": [
+    "sct",
+    "spec-code-test",
+    "consistency",
+    "test-automation",
+    "change-impact"
+  ],
+  "created_at": "2026-08-27T00:00:00Z",
+  "updated_at": "2026-08-27T00:00:00Z"
+}

@@ -1,0 +1,105 @@
+# =====================================================================
+# acceptance.yaml 产物模板（SCT 阶段 1：speckit.sct.merge）
+# ---------------------------------------------------------------------
+# 本文件是 SoT（Single Source of Truth）的结构约定。
+# 由 spec-merge.py 从 spec.md / plan.md / data-model.md / api-contracts.md
+# 自动生成；人工补充时必须遵循本结构。
+#
+# 硬性约定：
+#   1. 每个 acceptance_scenario 必须包含完整的 given / when / then 三要素
+#   2. scenario.id 格式为 {feature_id}-{序号}（如 F001-1），全局唯一
+#   3. apis[] 与 rules[] 的 id 是测试命名的唯一依据（test_api_xxx / test_br_xxx）
+#   4. 本文件是唯一真相来源：spec / code / test 三方一致性均以本文件为准
+# =====================================================================
+
+_meta:
+  generated_at: "2026-01-01T00:00:00"   # 生成时间（ISO 8601）
+  source_spec: "specs/001-xxx/spec.md"  # 来源 spec 路径
+  tool: "spec-merge.py"                 # 生成工具
+  tool_home: "speckit-extension:sct/scripts/spec-merge.py"
+  version: "1.0-W2-INTERNAL"
+  ai_enhanced: false                    # 是否启用 --ai 增强 edge_cases
+  coverage_mode: full                   # full=全量（新项目/模块重构，SoT 应覆盖扫描范围内全部接口）
+                                        # incremental=增量（存量项目不做全量补测：SoT 只登记
+                                        #   本次变更范围，存量未登记代码不算漂移；门禁 =
+                                        #   SoT 范围内覆盖 100% + 增量行覆盖率 ≥ 80%）
+  test_timing: post                     # 测试生成时序（SCT 正统时序 = 名字顺序 Spec→Code→Test）：
+                                        # post=代码先行（默认：implement 期间不生成测试，
+                                        #   代码编写独占资源；实现完成后由 sct.check 补生成，
+                                        #   此时代码定稿、CodeGraph 最新，一致性比对质量最高）
+                                        # pre=测试先行（TDD 式变体，可选：实现前先落可执行
+                                        #   断言作红灯护栏。前向保证链两档等价——保证来自
+                                        #   派生（测试由 SoT 派生、实现对照 SoT 契约），
+                                        #   不来自测试写得早）
+
+# ====== 功能与验收场景（来源：spec.md） ======
+features:
+  - id: F001                            # 格式：F{3位序号}
+    name: 批量导入测试任务
+    requirements:                       # 该功能的原始需求描述
+      - 支持 CSV 批量导入测试用例
+      - 单次导入上限 1000 条
+    acceptance_scenarios:
+      - id: F001-1                      # 格式：{feature_id}-{序号}
+        given: 已登录且拥有导入权限的用户
+        when: 上传包含 2 条合法用例的 CSV 文件
+        then: 创建批量任务，返回 taskId，状态为 PENDING
+        edge_cases:                     # AI 增强（--ai）产物，默认为空
+          - condition: CSV 中存在 1 条非法行
+            expected: 该行被跳过并在结果中记录原因
+      - id: F001-2
+        given: 已登录用户，已存在同名批量任务
+        when: 再次上传相同文件名的 CSV
+        then: 返回 409 冲突错误
+        edge_cases: []
+        # 可选：E2E 桥接段（供 change-impact-e2e-bridge.py 消费）
+        # e2e:
+        #   priority: P0                      # 回归优先级（P0/P1/P2）
+        #   pre_steps: [login, navigate:/batch/import]
+        #   action:
+        #     type: upload_file               # W1 仅支持 upload_file
+        #     file_ref: fixtures/tasks.csv    # 相对 e2e/fixtures/ 的测试数据
+        #   assertion:
+        #     type: ui_message                # W1 仅支持 ui_message
+        #     text: "导入成功"
+        #     timeout: 5000
+
+# ====== API 契约（来源：api-contracts.md / plan.md） ======
+apis:
+  - id: API-001                         # 格式：API-{3位序号}，测试文件据此命名
+    name: 创建批量导入任务
+    method: POST
+    path: /api/batch-tasks
+    spec_ref: "specs/001-xxx/spec.md#批量导入"   # 反向追溯锚点
+    request:
+      body:                             # 请求体字段定义
+        - name: fileName
+          type: String
+          required: true
+          description: CSV 文件名
+          example: "导入模板_20260819.csv"   # 可选：真实示例值。无 CodeGraph 时
+                                           # 生成器按 example > enum > 字段名启发式
+                                           # 取值——启发式值过不了后端校验（@Pattern
+                                           # 等）导致测试失败时，在此补 example 后
+                                           # 重新生成（改 SoT，不改测试）
+        - name: content
+          type: String
+          required: true
+          description: CSV 内容（Base64）
+          example: "eCwxLDIK"          # 有真实样本就填；留空则降级为启发式
+    response:
+      success:                          # 正常路径（生成 test_api_001_success）
+        status: 200
+        body:
+          taskId: "string"
+      errors:                           # 异常路径（生成 test_api_001_error_N）
+        - condition: 必填字段缺失
+          status: 400
+          message: "fileName is required"
+
+# ====== 业务规则（来源：data-model.md / spec.md） ======
+rules:
+  - id: BR-001                          # 格式：BR-{3位序号}，测试函数据此命名
+    text: 单次导入不超过 1000 条用例
+    derived_from: "specs/001-xxx/spec.md#数据约束"  # 规则来源锚点
+    priority: P0                        # P0=必须满足 / P1=重要 / P2=一般
