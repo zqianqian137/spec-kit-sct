@@ -3,6 +3,38 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.0.1] - 2026-08-28
+
+### Added — Java unit tests now follow the classic AAA pattern
+- Generated JUnit tests use the **Arrange / Act / Assert** structure with a
+  `@DisplayName` intent annotation (JUnit 5) describing the rule, inputs, and expected
+  result — matching hand-written unit-test conventions.
+- **Signature-bound generation.** When `--code` is given, `codegen` parses the target
+  method's **public signature** to bind SoT inputs to parameters (by name, else position)
+  and to auto-detect collaborators for `@Mock`. Spring is never used
+  (`MockitoExtension` on JUnit 5, `MockitoJUnitRunner` on JUnit 4). The code body is never
+  read, so assertions cannot be reverse-engineered from the implementation.
+- **SoT-anchored mock stubs.** A new `given` list on a `test_case` emits
+  `when(collaborator.method()).thenReturn(value)` in Arrange, so collaborator behavior is
+  pinned by the requirement rather than the mock's default. Without `given` on a mocked
+  dependency, a `MOCK_NOT_STUBBED` drift is raised.
+- **`BINDING_DRIFT` divergence signals.** When the SoT and code disagree, codegen emits a
+  structured drift (also in `_codegen_meta.json` and the coverage report) instead of a
+  confusing failure: `METHOD_NOT_FOUND`, `MISSING_INPUT`, `UNCONSTRUCTABLE_ARG`,
+  `MOCK_NOT_STUBBED`. Each points to the exact element a human must adjudicate.
+- **UTF-8 Chinese output.** Generated `.java` files may carry Chinese `@DisplayName` /
+  comments; documented the `javac -encoding UTF-8` / Maven `sourceEncoding=UTF-8`
+  requirement (supersedes the earlier ASCII-only hardening — the test is now readable and
+  still compiles under UTF-8).
+
+### Changed
+- The assertion-authority note in generated tests now reads: *the test is the alarm, not
+  the verdict* — when it fails, escalate to a human (code wrong → fix code; SoT wrong →
+  fix SoT and regenerate). It no longer asserts tests must never be edited to please code;
+  the correct action is to resolve the divergence at its source.
+- Removed the dead `scripts/python/sct_hooks.py` and `run_sct_hooks.py` (leftover from the
+  pre-non-intrusive draft; `extension.yml` declares no hooks, so they were never loaded).
+
 ## [1.0.0] - 2026-08-27
 
 ### Added

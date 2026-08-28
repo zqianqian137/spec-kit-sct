@@ -41,7 +41,7 @@ methodology hints; it never auto-runs an SCT command either.
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.0.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.1.zip
 ```
 
 Or install from a local checkout during development:
@@ -59,7 +59,7 @@ preset. Its overrides only append **optional methodology hints** (keep an
 auto-run an SCT command and never alter the original flow:
 
 ```bash
-specify preset add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.0.zip
+specify preset add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.1.zip
 ```
 
 The preset lives in `presets/sct/` and requires the `sct` extension (or can be
@@ -134,6 +134,73 @@ if that still finds nothing, the test **fails clearly** (telling you to add `che
 instead of being silently skipped. Acceptance scenarios are end-to-end journeys and
 are validated at the API / E2E layers, so `test_scenarios.py` fails with a clear
 pointer rather than a false green.
+
+## Java unit tests — AAA pattern, signature-bound, SoT-anchored
+
+`speckit.sct.codegen` generates **executable JUnit unit tests** for business rules
+that carry `target` + `test_cases` in the SoT. Generated tests follow the classic
+**AAA** structure with a `@DisplayName` intent annotation (JUnit 5):
+
+```java
+@Test
+@DisplayName("BR-001: VIP3 会员购买 100 元商品应返回 85 元折后价 | 输入 originalPrice=100.0, vipLevel=3 时应返回 85.0")
+void testCalculateDiscountPrice_WithVip3_ShouldReturn85() throws Exception {
+    // 1. Arrange (准备/输入)
+    double originalPrice = 100.0d;
+    int vipLevel = 3;
+    double expectedResult = 85.0;            // 预期结果来自 SoT
+    // 2. Act (执行)
+    var actual = service.calculateDiscountPrice(originalPrice, vipLevel);
+    // 3. Assert (断言)
+    assertEquals(expectedResult, actual, "BR-001: ... 返回值与预期不符");
+}
+```
+
+How the three JUnit parts are sourced — so the test is **not biased by the code**:
+
+- **Inputs (values)** come from `test_cases.inputs` in the SoT.
+- **Inputs (shape)** — parameter types / order — come from the **public signature**
+  of the target method, parsed at generation time when `--code` is passed. The
+  generator binds SoT inputs to parameters by name (else position) and auto-detects
+  collaborators (constructor params + injected fields) to `@Mock` them — Spring is
+  **never** used (`@ExtendWith(MockitoExtension.class)` on JUnit 5,
+  `@RunWith(MockitoJUnitRunner.class)` on JUnit 4). It reads the signature, not the
+  method body, so it cannot reverse-engineer the assertion.
+- **Assertions / exceptions** come from `test_cases.expect` (SoT), never from the code.
+
+**Mock stubs are SoT-anchored too.** When a rule depends on a collaborator, add a
+`given` list so the generator emits `when(...).thenReturn(...)` in Arrange; without it
+the test would silently fail on the mock's default value:
+
+```yaml
+test_cases:
+  - name: testTotal_ShouldReturnRepoCount
+    inputs: {}
+    given:
+      - call: batchRepository.count()   # stub the collaborator (Arrange)
+        returns: 5
+    expect: { returns: 5 }
+```
+
+**Divergence is a signal, not a verdict.** When the SoT and the code disagree, the
+generator emits a `BINDING_DRIFT` entry (also written to `_codegen_meta.json` and the
+coverage report) instead of a confusing red:
+
+- `METHOD_NOT_FOUND` — the SoT target method was renamed / removed in code.
+- `MISSING_INPUT` — a parameter has no value in `test_cases.inputs`.
+- `UNCONSTRUCTABLE_ARG` — a complex object / object list can't be auto-built (e.g.
+  `List<Case>`); the arg is set to `null` and the test fails honestly so a human fills
+  a `call` or a constructible value.
+- `MOCK_NOT_STUBBED` — a collaborator is mocked but no `given` stub was provided.
+
+When a generated test fails, **never silently edit it green**. Escalate to a human:
+code is wrong → fix the code; SoT / test is wrong → fix the SoT and regenerate. Both
+fixes must trace back to the requirement — the test is the alarm, not the verdict.
+
+> Generated `.java` files may carry **Chinese** `@DisplayName` / comments. Compile with
+> UTF-8: `javac -encoding UTF-8 ...`, or set `project.build.sourceEncoding=UTF-8` in
+> Maven. JUnit 5 is preferred; if the project already uses JUnit 4, codegen follows 4
+> (the two are never mixed).
 
 ## Notes
 

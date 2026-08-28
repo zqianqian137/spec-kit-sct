@@ -553,6 +553,143 @@ def detect_junit_version(java_test_root: str) -> str:
 
 
 # =====================================================================
+# Java 源码绑定（读公共签名/依赖，不读实现体）
+# —— 解决"输入参数怎么和代码对上""哪些需要 mock"：
+#    值(VALUES)与期望(EXPECTATIONS)来自 SoT；形参顺序/类型/协作者来自代码公共契约。
+#    这是人写单测的方式：先看方法签名，再从规格取输入与期望。不属于"被代码带偏"。
+# =====================================================================
+
+_JAVA_PRIM = {"byte","short","int","long","float","double","boolean","char",
+              "Byte","Short","Integer","Long","Float","Double","Boolean","Character"}
+_JAVA_VALUE_FULL = {"java.lang.String","java.math.BigDecimal","java.time.LocalDate",
+                    "java.time.LocalDateTime","java.time.LocalTime","java.util.UUID",
+                    "java.util.Date","java.time.Instant","java.lang.Object"}
+_JAVA_COLLECTION = {"List","Set","Collection","Map","java.util.List","java.util.Set",
+                    "java.util.Collection","java.util.Map","java.util.Optional"}
+
+def _is_value_type(t: str) -> bool:
+    t = (t or "").strip().split("<")[0].strip()
+    return t in _JAVA_PRIM or t in _JAVA_VALUE_FULL or t in _JAVA_COLLECTION
+
+
+def _unconstructible(v, type_: str) -> bool:
+    """SoT 输入值能否自动转成该类型的 Java 字面量；不能则需人工补 'call' 或构造值。"""
+    t = (type_ or "").strip().split("<")[0].strip()
+    if t in _JAVA_PRIM or t in ("String", "java.lang.String") or t in ("boolean", "Boolean"):
+        return False
+    if t in ("List", "Set", "Collection", "java.util.List", "java.util.Set",
+             "java.util.Collection", "java.util.Optional"):
+        if isinstance(v, (list, tuple)):
+            return not all(isinstance(x, (int, float, bool, str, type(None))) for x in v)
+        return True  # 未提供列表
+    # 复杂对象（非值类型）：dict/对象无法自动 new，标记为不可构造
+    return True
+
+
+def _split_params(s: str) -> list:
+    """把 '(a, b)' 内参数串拆成 [{type, name}]，尊重 <> 与 () 嵌套"""
+    s = (s or "").strip()
+    if not s:
+        return []
+    parts, depth, cur = [], 0, ""
+    for ch in s:
+        if ch in "<(":
+            depth += 1
+        elif ch in ">)":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(cur); cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        parts.append(cur)
+    out = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        toks = p.split()
+        if len(toks) >= 2:
+            name = toks[-1].rstrip("[]")
+            type_ = " ".join(toks[:-1]).rstrip("[]")
+        else:
+            name, type_ = "arg", toks[0].rstrip("[]")
+        type_ = re.sub(r"^(final|volatile|transient)\s+", "", type_)
+        out.append({"type": type_, "name": name})
+    return out
+
+
+def find_java_source(code_root: str, cls_full: str):
+    """按包路径定位 .java；找不到则 rglob 简单类名"""
+    root = Path(code_root)
+    if not root.exists():
+        return None
+    pkg, simple = _java_class_name(cls_full)
+    cand = root / (pkg.replace(".", "/") if pkg else "") / (simple + ".java")
+    if cand.exists():
+        return cand
+    hits = list(root.rglob(simple + ".java"))
+    return hits[0] if hits else None
+
+
+def parse_java_class(source_path, cls_full: str) -> dict:
+    """读类的公共契约：目标方法形参 + 协作者类型（构造器/字段依赖）。不读方法体。"""
+    text = Path(source_path).read_text(encoding="utf-8", errors="ignore")
+    pkg, simple = _java_class_name(cls_full)
+    methods = {}
+    # 目标方法（按名定位）；也顺带记所有 public 方法供回退
+    for mm in re.finditer(r"\b([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:throws[\w,\s.<>]+?)?\{", text):
+        methods.setdefault(mm.group(1), _split_params(mm.group(2)))
+    # 协作者：构造器参数 + private/@Autowired 字段，过滤掉值类型
+    collaborators = []
+    cm = re.search(r"\b" + re.escape(simple) + r"\s*\(([^)]*)\)", text)
+    if cm:
+        for p in _split_params(cm.group(1)):
+            if not _is_value_type(p["type"]):
+                collaborators.append(p["type"])
+    for fm in re.finditer(r"(?:@Autowired\s*)?private\s+(?:final\s+)?([\w<>\[\],\s.]+?)\s+([A-Za-z_]\w*)\s*;", text):
+        t = fm.group(1).strip()
+        if not _is_value_type(t):
+            collaborators.append(t)
+    # 去重保序
+    seen, uniq = set(), []
+    for c in collaborators:
+        if c not in seen:
+            seen.add(c); uniq.append(c)
+    return {"methods": methods, "collaborators": uniq}
+
+
+def _java_value_typed(value, type_: str) -> str:
+    """按声明类型把 SoT 值转 Java 字面量；复杂对象无字面量时给 null 并标记"""
+    t = (type_ or "").strip().split("<")[0].strip()
+    if t in ("List","Set","Collection","java.util.List","java.util.Set","java.util.Collection"):
+        if isinstance(value, (list, tuple)):
+            elems = ", ".join(_java_value(v) for v in value)
+            return f"java.util.List.of({elems})" if elems else "java.util.List.of()"
+        return "java.util.List.of()"
+    if t in ("Map","java.util.Map"):
+        return "java.util.Map.of()"
+    if t in ("boolean","Boolean"):
+        return "true" if value else "false"
+    if t in ("int","long","short","byte","Integer","Long","Short","Byte"):
+        try:
+            return str(int(value))
+        except Exception:
+            return "0"
+    if t in ("double","float","Double","Float"):
+        try:
+            return str(float(value)) + ("d" if t == "double" else "f")
+        except Exception:
+            return "0.0"
+    if t in ("char","Character"):
+        return _java_value(value)
+    if t in ("String","java.lang.String") or value is None:
+        return _java_value(value)
+    # 复杂对象：SoT 未给可构造字面量 → null（调用方应标 BINDING_DRIFT）
+    return "null"
+
+
+# =====================================================================
 # Java 单元测试生成（JUnit + Mockito，零 Spring）
 # =====================================================================
 
@@ -580,6 +717,62 @@ def _simple_name(full: str) -> str:
     return full.rsplit(".", 1)[-1]
 
 
+def _display_name(rule_text: str, rid: str, tc: dict, exp: dict, inputs) -> str:
+    """生成 @DisplayName 中文意图注解：规则文本 + 输入摘要 + 预期结果"""
+    base = (rule_text or rid or "业务规则").strip()
+    if isinstance(inputs, dict) and inputs:
+        ins = ", ".join(f"{k}={_java_value(v)}" for k, v in inputs.items())
+    elif isinstance(inputs, list):
+        ins = ", ".join(_java_value(v) for v in inputs)
+    else:
+        ins = "无显式输入"
+    if "throws" in exp:
+        tail = f"输入 {ins} 时应抛出 {_simple_name(exp['throws'])}"
+    elif "returns" in exp:
+        tail = f"输入 {ins} 时应返回 {_java_value(exp['returns'])}"
+    else:
+        tail = f"输入 {ins} 时应正常执行"
+    name = f"{rid}: {base} | {tail}" if rid else f"{base} | {tail}"
+    return name.replace('"', '\\"')
+
+
+def _infer_type(v) -> str:
+    """根据 SoT 期望值推断 Java 字面量类型（用于声明 expectedResult）"""
+    if isinstance(v, bool):
+        return "boolean"
+    if isinstance(v, int):
+        return "int"
+    if isinstance(v, float):
+        return "double"
+    if isinstance(v, str):
+        return "String"
+    return "Object"
+
+
+def _literal_for_type(v, t: str) -> str:
+    """把 SoT 期望值规范化为与声明类型匹配的字面量（避免 int/double 类型错配）"""
+    lit = _java_value(v)
+    t = (t or "Object").strip()
+    if t in ("int", "long", "short", "byte"):
+        s = lit.replace('"', '')
+        try:
+            num = float(s)
+            return f"{int(num)}L" if t == "long" else str(int(num))
+        except ValueError:
+            return lit
+    if t in ("double", "float"):
+        s = lit.replace('"', '')
+        try:
+            num = float(s)
+            suffix = "F" if t == "float" else ""
+            if num.is_integer():
+                return f"{int(num)}.0{suffix}"
+            return f"{num}{suffix}"
+        except ValueError:
+            return lit
+    return lit
+
+
 def _camel_to_snake(name: str) -> str:
     """CamelCase 转 snake_case，用于 JUnit 4 / public 修饰符友好的方法名"""
     import re as _re
@@ -588,15 +781,38 @@ def _camel_to_snake(name: str) -> str:
     return s.lower()
 
 
-def _render_java_test_class(rule: dict, junit_version: str):
-    """生成单个 JUnit 测试类源码；返回 (file_name, source) 或 None（缺关键字段）"""
-    target = rule.get("target") or {}
+def _render_java_test_class(rules: list, junit_version: str, class_info: dict = None):
+    """为同一目标类(同 cls_full 的多个规则)生成单个 JUnit 测试类；
+    返回 (file_name, source, binding_drifts)。一个类只落一个测试文件，避免多规则互相覆盖。"""
+    first = rules[0]
+    target = first.get("target") or {}
     cls_full = target.get("class", "")
-    method = target.get("method", "")
-    mocks = rule.get("mocks") or []
-    test_cases = rule.get("test_cases") or []
-    if not cls_full or not method or not test_cases:
+    # 每规则的 (rule_id, method) 用于 METHOD_NOT_FOUND 检测与逐案例绑定
+    rule_methods = [(r.get("id", ""), (r.get("target") or {}).get("method", "")) for r in rules]
+    rule_mocks = []
+    for r in rules:
+        rule_mocks.extend(r.get("mocks") or [])
+    all_test_cases = []
+    for r in rules:
+        all_test_cases.extend(r.get("test_cases") or [])
+    if not cls_full or not all_test_cases:
         return None
+
+    binding_drifts = []
+    params_cache = {}
+    collaborators = []
+    if class_info:
+        collaborators = class_info.get("collaborators") or []
+        for rid, m in rule_methods:
+            pm = class_info.get("methods", {}).get(m)
+            params_cache[m] = pm
+            if pm is None:
+                binding_drifts.append({
+                    "rule": rid, "class": cls_full, "method": m,
+                    "kind": "METHOD_NOT_FOUND",
+                    "detail": f"SoT 目标方法 {cls_full}.{m} 未在代码公共契约中找到"
+                              f"（改名/删除/签名变更）→ 需人工裁决：改 SoT 还是改代码",
+                })
 
     pkg, cls_simple = _java_class_name(cls_full)
     test_cls_name = cls_simple + "Test"
@@ -606,11 +822,13 @@ def _render_java_test_class(rule: dict, junit_version: str):
         imports = [
             f"import {cls_full};",
             "import org.junit.jupiter.api.Test;",
+            "import org.junit.jupiter.api.DisplayName;",
             "import org.junit.jupiter.api.extension.ExtendWith;",
             "import org.mockito.InjectMocks;",
             "import org.mockito.Mock;",
             "import org.mockito.junit.jupiter.MockitoExtension;",
             "import static org.junit.jupiter.api.Assertions.*;",
+            "import static org.mockito.Mockito.when;",
         ]
         class_anno = "@ExtendWith(MockitoExtension.class)"
         test_anno = "@Test"
@@ -623,6 +841,7 @@ def _render_java_test_class(rule: dict, junit_version: str):
             "import org.mockito.Mock;",
             "import org.mockito.runners.MockitoJUnitRunner;",
             "import static org.junit.Assert.*;",
+            "import static org.mockito.Mockito.when;",
         ]
         class_anno = "@RunWith(MockitoJUnitRunner.class)"
         test_anno = "@Test"
@@ -630,7 +849,7 @@ def _render_java_test_class(rule: dict, junit_version: str):
 
     # 收集 test_cases 引用的异常/类，统一 import
     referenced = set()
-    for tc in test_cases:
+    for tc in all_test_cases:
         exp = tc.get("expect") or {}
         for k in ("throws", "returns"):
             v = exp.get(k)
@@ -639,6 +858,14 @@ def _render_java_test_class(rule: dict, junit_version: str):
     for r in sorted(referenced):
         if r != cls_full:
             imports.append(f"import {r};")
+    # mock 来源：SoT 显式 mocks > 自动协作者(构造器/字段依赖) > 无
+    mocks = list(dict.fromkeys(rule_mocks))
+    if not mocks and collaborators:
+        mocks = collaborators
+    # 跨包协作者需 import（同包/简单名不加，避免非法 import）
+    for m in mocks:
+        if "." in m and m != cls_full:
+            imports.append(f"import {m};")
     imports = sorted(set(imports))
 
     # mock 字段
@@ -647,78 +874,203 @@ def _render_java_test_class(rule: dict, junit_version: str):
         m_pkg, m_simple = _java_class_name(m)
         field_name = (m_simple[0].lower() + m_simple[1:]) if m_simple else f"mock{i}"
         mock_fields.append(f"    @Mock private {m_simple} {field_name};")
-    inject_field = f"    @InjectMocks private {cls_simple} service;"
+    inject_field = (
+        "    // 被测对象：由 Mockito 将下方 @Mock 协作者注入，等价于 Arrange 阶段的实例化\n"
+        f"    @InjectMocks private {cls_simple} service;"
+    )
 
-    # test 方法
+    # test 方法：逐规则 → 逐案例，按各自方法的公共签名绑定
     methods = []
-    for tc in test_cases:
-        tc_name = tc.get("name") or f"test_{method}"
-        # 参数：优先用 call（整段方法调用），否则从 inputs dict 拼
-        call = tc.get("call")
-        if not call:
+    if class_info and any((params_cache.get(m) is None) for _, m in rule_methods):
+        drift_msg = "; ".join(d["detail"] for d in binding_drifts)
+        fail_call = ("org.junit.jupiter.api.Assertions.fail" if junit_version == "5"
+                     else "org.junit.Assert.fail")
+        methods.append(
+            f"    {test_anno}\n    {method_modifier}void test_BINDING_DRIFT() {{\n"
+            f"        // BINDING_DRIFT: SoT 与代码公共契约不一致，需人工确认 SoT 还是代码错。\n"
+            f"        {fail_call}(\"{_java_value(drift_msg)}\");\n"
+            f"    }}"
+        )
+    for r in rules:
+        rid = r.get("id", "")
+        rtext = r.get("text", "")
+        m = (r.get("target") or {}).get("method", "")
+        params = params_cache.get(m) if class_info else None
+        for tc in (r.get("test_cases") or []):
+            if params is None and class_info:
+                continue  # 方法缺失已记录 drift，跳过逐案例生成
+            tc_name = tc.get("name") or f"test_{m}"
             inputs = tc.get("inputs") or {}
-            if isinstance(inputs, dict) and inputs:
-                args = ", ".join(_java_value(v) for v in inputs.values())
-            else:
-                args = ""
-            call = f"service.{method}({args})"
-        exp = tc.get("expect") or {}
+            exp = tc.get("expect") or {}
+            display = _display_name(rtext, rid, tc, exp, inputs)
+            dn5 = f'    @DisplayName("{display}")\n' if junit_version == "5" else ""
 
-        if "throws" in exp:
-            ex_full = exp["throws"]
-            ex_simple = _simple_name(ex_full)
-            if junit_version == "5":
-                method_body = (
-                    f"        assertThrows({ex_simple}.class, () -> {{\n"
-                    f"            {call};\n"
-                    f"        }});"
-                )
-                methods.append(
-                    f"    {test_anno}\n    {method_modifier}void {tc_name}() {{\n"
-                    f"{method_body}\n    }}"
-                )
+            # ---- Arrange：按公共签名把 SoT 输入绑定为具名局部变量 ----
+            arrange = []
+            call = tc.get("call")
+            if not call:
+                if params:
+                    arg_vars = []
+                    for i, p in enumerate(params):
+                        vname = p["name"] or f"arg{i}"
+                        vtype = p["type"] or "Object"
+                        provided = False
+                        v = None
+                        if isinstance(inputs, dict):
+                            if vname in inputs:
+                                v = inputs[vname]; provided = True
+                            elif isinstance(inputs, list) and i < len(inputs):
+                                v = inputs[i]; provided = True
+                        if provided:
+                            if _unconstructible(v, vtype):
+                                binding_drifts.append({
+                                    "rule": rid, "class": cls_full, "method": m,
+                                    "kind": "UNCONSTRUCTABLE_ARG",
+                                    "detail": f"形参 {vname}:{vtype} 的 SoT 输入无法自动构造 Java 字面量"
+                                              f"（复杂对象/对象列表）。请在 SoT 该 test_case 提供 'call' 整段调用，"
+                                              f"或给出可构造值；已置 null 使测试编译但运行失败，交由人工补齐。",
+                                })
+                                val = "null"
+                            else:
+                                val = _java_value_typed(v, vtype)
+                        else:
+                            val = _java_value_typed(None, vtype)
+                            binding_drifts.append({
+                                "rule": rid, "class": cls_full, "method": m,
+                                "kind": "MISSING_INPUT",
+                                "detail": f"形参 {vname}:{vtype} 在 SoT test_cases.inputs 中无对应值"
+                                          f"（请补 inputs 或确认参数已移除）",
+                            })
+                        arrange.append(f"        {vtype} {vname} = {val};")
+                        arg_vars.append(vname)
+                    call = f"service.{m}({', '.join(arg_vars)})"
+                elif isinstance(inputs, dict) and inputs:
+                    arg_vars = [f"arg{i}" for i in range(len(inputs))]
+                    for i, (k, v) in enumerate(inputs.items()):
+                        arrange.append(f"        Object arg{i} = {_java_value(v)};")
+                    call = f"service.{m}({', '.join(arg_vars)})"
+                elif isinstance(inputs, list):
+                    arg_vars = [f"arg{i}" for i in range(len(inputs))]
+                    for i, v in enumerate(inputs):
+                        arrange.append(f"        Object arg{i} = {_java_value(v)};")
+                    call = f"service.{m}({', '.join(arg_vars)})"
+                else:
+                    call = f"service.{m}()"
+
+            # ---- given：SoT 锚定的 mock 协作者桩（Arrange 的一部分，call 已确定后处理） ----
+            given = tc.get("given") or []
+            stub_lines = []
+            for g in given:
+                gcall = g.get("call") or g.get("when")
+                gret = g.get("returns")
+                if gcall and gret is not None:
+                    stub_lines.append(f"        when({gcall}).thenReturn({_java_value(gret)});")
+            arrange_final = list(arrange)
+            arrange_final.extend(stub_lines)
+            if mocks and not given and ("returns" in exp or "throws" in exp):
+                binding_drifts.append({
+                    "rule": rid, "class": cls_full, "method": m,
+                    "kind": "MOCK_NOT_STUBBED",
+                    "detail": f"方法 {m} 依赖 mock 协作者 {mocks}，但 SoT test_case 未提供 given 桩；"
+                              f"测试可能因 mock 默认返回值(0/null)而失败。请在 test_case 补 given: "
+                              f"[{{ call: '<mockVar>.<method>()', returns: <值> }}]。",
+                })
+                arrange_final.append(
+                    "        // 注意：本测试依赖 mock 协作者，但 SoT 未提供 given 桩；"
+                    "断言可能因 mock 默认返回值(0/null)失败，请补 given。")
+            arrange_block = "\n".join(arrange_final) if arrange_final else "        // （无显式输入）"
+            arr_comment = (
+                "        // ==========================\n"
+                "        // 1. Arrange (准备/输入)\n"
+                "        // ==========================\n"
+            )
+
+            if "throws" in exp:
+                ex_simple = _simple_name(exp["throws"])
+                msg = f"{rid}: {rtext} 异常场景未按预期抛出 {ex_simple}"
+                if junit_version == "5":
+                    methods.append(
+                        f"    {test_anno}\n{dn5}"
+                        f"    {method_modifier}void {tc_name}() throws Exception {{\n"
+                        f"{arr_comment}{arrange_block}\n"
+                        "        // ==========================\n"
+                        "        // 2 & 3. Act & Assert (执行与断言)\n"
+                        "        // ==========================\n"
+                        f"        assertThrows({ex_simple}.class, () -> {{\n"
+                        f"            {call};\n"
+                        f"        }}, \"{msg}\");\n    }}"
+                    )
+                else:
+                    methods.append(
+                        f"    {test_anno}(expected = {ex_simple}.class)\n"
+                        f"    {method_modifier}void {tc_name}() throws Exception {{\n"
+                        f"{arr_comment}{arrange_block}\n"
+                        "        // ==========================\n"
+                        "        // 2 & 3. Act & Assert (执行与断言)\n"
+                        "        // ==========================\n"
+                        f"        {call};  // 预期抛出 {ex_simple}\n    }}"
+                    )
+            elif "returns" in exp:
+                ret_val = exp["returns"]
+                ret_type = _infer_type(ret_val)
+                ret_lit = _literal_for_type(ret_val, ret_type)
+                msg = f"{rid}: {rtext} 返回值与预期不符"
+                if junit_version == "5":
+                    methods.append(
+                        f"    {test_anno}\n{dn5}"
+                        f"    {method_modifier}void {tc_name}() throws Exception {{\n"
+                        f"{arr_comment}{arrange_block}\n"
+                        f"        {ret_type} expectedResult = {ret_lit};  // 预期结果\n"
+                        "        // ==========================\n"
+                        "        // 2. Act (执行)\n"
+                        "        // ==========================\n"
+                        f"        var actual = {call};\n"
+                        "        // ==========================\n"
+                        "        // 3. Assert (断言)\n"
+                        "        // ==========================\n"
+                        f"        assertEquals(expectedResult, actual, \"{msg}\");\n    }}"
+                    )
+                else:
+                    methods.append(
+                        f"    {test_anno}\n"
+                        f"    {method_modifier}void {tc_name}() throws Exception {{\n"
+                        f"{arr_comment}{arrange_block}\n"
+                        f"        {ret_type} expectedResult = {ret_lit};  // 预期结果\n"
+                        "        // ==========================\n"
+                        "        // 2 & 3. Act & Assert (执行与断言)\n"
+                        "        // ==========================\n"
+                        f"        assertEquals(expectedResult, {call}, \"{msg}\");\n    }}"
+                    )
             else:
-                # JUnit 4: @Test(expected=...) 最干净
                 methods.append(
-                    f"    {test_anno}(expected = {ex_simple}.class)\n"
-                    f"    {method_modifier}void {tc_name}() {{\n"
-                    f"        {call};\n"
-                    f"    }}"
+                    f"    {test_anno}\n{dn5}"
+                    f"    {method_modifier}void {tc_name}() throws Exception {{\n"
+                    f"{arr_comment}{arrange_block}\n"
+                    "        // ==========================\n"
+                    "        // 2. Act (执行)\n"
+                    "        // ==========================\n"
+                    f"        {call};\n    }}"
                 )
-        elif "returns" in exp:
-            ret = _java_value(exp["returns"])
-            method_body = (
-                f"        Object result = {call};\n"
-                f"        assertEquals({ret}, result);"
-            )
-            methods.append(
-                f"    {test_anno}\n    {method_modifier}void {tc_name}() {{\n"
-                f"{method_body}\n    }}"
-            )
-        else:
-            # 无 expect（默认 noThrow）：直接调用，让 JUnit 报告未预期异常
-            methods.append(
-                f"    {test_anno}\n    {method_modifier}void {tc_name}() {{\n"
-                f"        {call};\n"
-                f"    }}"
-            )
 
     parts = []
     if pkg:
         parts.append(f"package {pkg};\n")
     parts.append("\n".join(imports))
     parts.append("")
-    rule_id = (rule.get("id") or "RULE").upper()
+    rule_ids = ", ".join(sorted({r.get("id", "").upper() for r in rules if r.get("id")}))
     parts.append(
-        f"// === Assertion authority = SoT (acceptance.yaml#rules[{rule_id}]) ===\n"
-        f"// This test is derived from SoT test_cases; its expectation comes from the\n"
-        f"// requirement, NOT from the implementation under test. If the implementation\n"
-        f"// deviates from SoT, this test MUST fail -- do not edit this test to please code."
+        f"// === Assertion authority = SoT (acceptance.yaml#rules[{rule_ids}]) ===\n"
+        f"// 本文件由 SCT 依据 SoT(acceptance.yaml) 自动生成，采用经典 AAA 结构：\n"
+        f"//   Arrange 准备输入(值来自 SoT test_cases) -> Act 执行被测方法 -> Assert 断言(期望来自 SoT)。\n"
+        f"// 输入'值'取自 SoT；'形状'(形参类型/顺序)取自代码公共契约；协作者由 Mockito 自动 mock。\n"
+        f"// 编码提示：本文件含中文 @DisplayName/注释，编译须以 UTF-8 读取\n"
+        f"//   (javac -encoding UTF-8；Maven 请设 <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>)。\n"
+        f"// 测试失败 = 代码与 SoT 的分歧信号，绝不静默改测试变绿；交人工裁决：\n"
+        f"//   代码错 -> 改代码；SoT/测试错 -> 改 SoT 后重新生成。两种修正都须追溯到需求。"
     )
     parts.append("")
     parts.append(class_anno)
     if junit_version == "4":
-        # JUnit 4 类需 public
         parts.append(f"public class {test_cls_name} {{")
     else:
         parts.append(f"class {test_cls_name} {{")
@@ -731,34 +1083,54 @@ def _render_java_test_class(rule: dict, junit_version: str):
         parts.append("\n\n".join(methods))
     parts.append("}")
     src = "\n".join(parts) + "\n"
-    return file_name, src
+    return file_name, src, binding_drifts
 
 
-def gen_java_unit_tests(rules: list, java_test_root: str, junit_version: str) -> list:
+def gen_java_unit_tests(rules: list, java_test_root: str, junit_version: str,
+                        code_root: str = "") -> tuple:
     """为含 target+test_cases 的规则生成 JUnit + Mockito 测试类（无 Spring）
 
     关键约束（用户要求）：
       - 禁用 Spring Boot：不生成 @SpringBootTest / @MockBean / @Autowired
       - 用 mock 方式：@Mock / @InjectMocks + MockitoExtension(JUnit5) 或 MockitoJUnitRunner(JUnit4)
       - 不可混用：优先 JUnit 5；项目存量为 JUnit 4 则跟 4
-      - 断言来源 = SoT（防被代码带偏）：本函数只读 rule.target / mocks / test_cases，
-        绝不读取代码体来合成断言；代码是被测黑盒，test_cases.expect 唯一决定断言。
+      - 断言来源 = SoT（防被代码带偏）：只读 rule.target/mocks/test_cases 取"值/期望"，
+        绝不读取方法体来合成断言
+      - 公共契约绑定（新增，回答"输入怎么对上"）：若提供 code_root，解析目标类公共契约
+        （方法形参 + 协作者），用于按签名绑定输入、自动 mock，并检测 METHOD_NOT_FOUND /
+        MISSING_INPUT 等 BINDING_DRIFT 交人工裁决；不读方法体，不反推断言。
+    返回 (生成文件列表, binding_drifts 列表)
     """
     generated = []
+    all_drifts = []
     root = Path(java_test_root)
+    # 按目标类分组：同一 cls_full 的多个规则合并进一个测试文件（避免互相覆盖）
+    groups = {}
     for rule in rules:
-        result = _render_java_test_class(rule, junit_version)
+        cls_full = (rule.get("target") or {}).get("class", "")
+        method = (rule.get("target") or {}).get("method", "")
+        test_cases = rule.get("test_cases") or []
+        if not cls_full or not method or not test_cases:
+            continue
+        groups.setdefault(cls_full, []).append(rule)
+    for cls_full, grp in groups.items():
+        class_info = None
+        if code_root and cls_full:
+            sp = find_java_source(code_root, cls_full)
+            if sp:
+                class_info = parse_java_class(sp, cls_full)
+        result = _render_java_test_class(grp, junit_version, class_info)
         if not result:
             continue
-        file_name, src = result
-        cls_full = (rule.get("target") or {}).get("class", "")
+        file_name, src_code, drifts = result
+        all_drifts.extend(drifts)
         pkg, _ = _java_class_name(cls_full)
         out_dir = (root / pkg.replace(".", "/")) if pkg else root
         out_dir.mkdir(parents=True, exist_ok=True)
         file_path = out_dir / file_name
-        file_path.write_text(src, encoding="utf-8")
+        file_path.write_text(src_code, encoding="utf-8")
         generated.append(str(file_path))
-    return generated
+    return generated, all_drifts
 
 
 # =====================================================================
@@ -883,21 +1255,17 @@ def _gen_python_rule_fallbacks(rules: list, out_dir: Path,
 
 
 def gen_rule_tests(rules: list, out_dir: Path, code_root: str = "backend/src/main/java",
-                   java_test_root: str = "src/test/java", junit_version: str = "5") -> list:
-    """分发器：单测层首选 JUnit + Mockito Java 测试，无锚点规则保留 Python fallback
-
-    行为：
-      - 含 target.class + target.method + test_cases 的规则 → gen_java_unit_tests
-        （JUnit 5: @ExtendWith(MockitoExtension.class)；JUnit 4: @RunWith(MockitoJUnitRunner.class)）
-      - 其余规则 → _gen_python_rule_fallbacks（离线静态扫描，明确标注为 fallback）
+                   java_test_root: str = "src/test/java", junit_version: str = "5") -> tuple:
+    """分发器：单测层首选 JUnit + Mockito Java 测试，无锚点规则保留 Python fallback。
+    返回 (生成文件列表, binding_drifts 列表)
     """
-    java_files = gen_java_unit_tests(rules, java_test_root, junit_version)
+    java_files, java_drifts = gen_java_unit_tests(rules, java_test_root, junit_version, code_root)
     fallback_rules = [r for r in rules
                       if not ((r.get("target") or {}).get("class")
                               and (r.get("target") or {}).get("method")
                               and r.get("test_cases"))]
     py_files = _gen_python_rule_fallbacks(fallback_rules, out_dir, code_root)
-    return java_files + py_files
+    return java_files + py_files, java_drifts
 
 
 def gen_scenario_tests(features: list, out_dir: Path) -> list:
@@ -951,7 +1319,7 @@ def {func_name}():
 
 def gen_coverage_report(acceptance: dict, out_dir: Path, field_drifts: list = None,
                         codegraph_ref: str = "", global_exceptions: list = None,
-                        api_annotations: dict = None) -> str:
+                        api_annotations: dict = None, binding_drifts: list = None) -> str:
     """生成覆盖率报告：spec → test 映射表（结构对齐 templates/coverage-report-template.md）"""
     apis = acceptance.get("apis", [])
     rules = acceptance.get("rules", [])
@@ -1059,6 +1427,20 @@ def gen_coverage_report(acceptance: dict, out_dir: Path, field_drifts: list = No
         for d in field_drifts:
             report += f"| {d['api']} | {d['field']} | {d['kind']} | {d['detail']} |\n"
 
+    # 绑定漂移（回答"输入/签名/mock 怎么和代码对上"；SoT↔代码公共契约不一致，需人工裁决）
+    if binding_drifts:
+        report += f"""
+## BINDING_DRIFT（SoT ↔ 代码公共契约比对）
+
+> 来源：--code 解析目标类公共契约。这些不是"测试失败"，而是 **SoT 与代码不一致的信号**，
+> 需人工裁决：改 SoT（重新生成）还是改代码。**切勿静默改测试凑绿**。
+
+| Rule | 类.方法 | 类型 | 说明 |
+|------|---------|------|------|
+"""
+        for d in binding_drifts:
+            report += f"| {d.get('rule','')} | {d.get('class','')}.{d.get('method','')} | {d.get('kind','')} | {d.get('detail','')} |\n"
+
     report += f"""
 
 ## 单元测试行覆盖率目标
@@ -1147,6 +1529,20 @@ def main():
     print(f"Found {len(apis)} APIs, {len(rules)} business rules, "
           f"{sum(len(f.get('acceptance_scenarios', [])) for f in features)} scenarios")
 
+    # 规则测试（含 BINDING_DRIFT 检测）：在 codegen_meta 落盘前生成，以便写入 meta
+    print("Generating rule tests...")
+    junit_version = args.junit
+    if junit_version == "auto":
+        junit_version = detect_junit_version(args.java_test_root)
+        print(f"JUnit version auto-detected: {junit_version}")
+    else:
+        print(f"JUnit version (explicit): {junit_version}")
+    rule_files, binding_drifts = gen_rule_tests(rules, out_dir, args.code, args.java_test_root, junit_version)
+    for f in rule_files:
+        print(f"  + {f}")
+    if binding_drifts:
+        print(f"⚠️  {len(binding_drifts)} 个绑定漂移（BINDING_DRIFT），详见 COVERAGE_REPORT.md（需人工裁决 SoT 还是代码）")
+
     print("Generating API tests...")
     api_files, field_drifts, api_annotations = gen_api_tests(apis, out_dir, graph_index,
                                                              base_url, global_exceptions)
@@ -1185,6 +1581,7 @@ def main():
         "codegraph": args.codegraph or "",
         "api_annotations": api_annotations,
         "field_drifts": field_drifts,
+        "binding_drifts": binding_drifts,
         "derived_error_cases_total": derived_total,
         "global_exceptions": global_exceptions,
     }
@@ -1198,16 +1595,7 @@ def main():
                          encoding="utf-8")
     print(f"  + {meta_path}")
 
-    print("Generating rule tests...")
-    junit_version = args.junit
-    if junit_version == "auto":
-        junit_version = detect_junit_version(args.java_test_root)
-        print(f"JUnit version auto-detected: {junit_version}")
-    else:
-        print(f"JUnit version (explicit): {junit_version}")
-    rule_files = gen_rule_tests(rules, out_dir, args.code, args.java_test_root, junit_version)
-    for f in rule_files:
-        print(f"  + {f}")
+    # 规则测试已在上方（API 测试之前）生成，含 BINDING_DRIFT 检测
 
     print("Generating scenario tests...")
     scenario_files = gen_scenario_tests(features, out_dir)
@@ -1216,7 +1604,7 @@ def main():
 
     print("Generating coverage report...")
     report = gen_coverage_report(acceptance, out_dir, field_drifts, args.codegraph or "",
-                                 global_exceptions, api_annotations)
+                                 global_exceptions, api_annotations, binding_drifts)
     print(f"  + {report}")
 
     print(f"\nDone. Generated {len(api_files) + len(rule_files) + len(scenario_files)} test files.")
