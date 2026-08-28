@@ -17,7 +17,7 @@ check: confirm the forward chain holds (3-way consistency + execution + coverage
 
 ## What it provides
 
-5 commands + 4 hook points (zero changes to Spec Kit core):
+5 commands — non-intrusive (zero hooks, original flow untouched):
 
 | Command | Purpose | Key artifact |
 |---------|---------|--------------|
@@ -27,13 +27,16 @@ check: confirm the forward chain holds (3-way consistency + execution + coverage
 | `speckit.sct.impact` | Reverse-trace code changes → affected scenarios (P0/P1/P2) + L1/L2/L3 tier | `change-impact.md` |
 | `speckit.sct.e2e` | Bridge impact + SoT into Playwright auto-regression | `e2e/auto_generated/*` |
 
-Hooks (auto-triggered): `after_plan → sct.merge` (suggest), `after_implement →
-sct.impact` then `sct.check`, `after_e2e → sct.e2e`. (`before_commit` is
-intentionally omitted — this workflow has no commit step.)
+**Non-intrusive by design.** SCT registers **no lifecycle hooks** and never
+alters the original `specify / plan / implement / constitution` flow. The 5
+commands above are invoked **manually by the user**, after implementation — the
+user decides, per change, whether and when to run `merge` / `codegen` / `check`
+/ `impact` / `e2e`. The companion preset (below) only appends optional
+methodology hints; it never auto-runs an SCT command either.
 
 ## Installation
 
-### Extension (commands + hooks + scripts)
+### Extension (commands + scripts)
 
 Install the released extension from its GitHub archive:
 
@@ -47,11 +50,13 @@ Or install from a local checkout during development:
 specify extension add --dev /path/to/spec-kit-sct
 ```
 
-### Companion preset (lightweight command overrides)
+### Companion preset (optional, hint-only command overrides)
 
-If you only want the SCT-flavored `speckit.specify` / `speckit.plan` /
-`speckit.implement` / `speckit.constitution` command overrides without the full
-extension machinery, add the companion preset:
+If you want SCT-flavored `speckit.specify` / `speckit.plan` / `speckit.implement`
+/ `speckit.constitution` **without** changing their behavior, add the companion
+preset. Its overrides only append **optional methodology hints** (keep an
+`acceptance.yaml` SoT, run the sct commands after implementation) — they never
+auto-run an SCT command and never alter the original flow:
 
 ```bash
 specify preset add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.0.zip
@@ -72,7 +77,9 @@ used standalone for terminology-only projects).
 ## When NOT to use it
 
 - You only need light terminology/template overrides — a **preset** is simpler.
-- Your team has no Spec Kit `implement`/`plan` flow (the hooks attach to those).
+- You expect SCT to auto-run inside your `plan`/`implement` flow — it does not;
+  the 5 commands are manual by design, so you must invoke them yourself after
+  implementation.
 
 ## Quick start
 
@@ -83,8 +90,8 @@ specify sct.merge --spec specs/001/spec.md --out specs/001/acceptance.yaml
 # 2. Derive write-once tests
 specify sct.codegen --spec specs/001/acceptance.yaml --out tests/generated
 
-# 3. After implementation, the after_implement hook auto-runs impact + check.
-#    Or run manually:
+# 3. After implementation, run these manually (nothing auto-fires):
+specify sct.impact            # optional: reverse-trace the change first
 specify sct.check --spec specs/001/acceptance.yaml --code backend/src/main/java --tests tests/generated
 
 # 4. Reverse-trace a change and (optionally) generate e2e regression
@@ -119,8 +126,8 @@ rules:
 ```
 
 `kind` may be `annotation` / `method` / `exception` / `constant` / `text`.
-`codegen` receives the code root via `--code` (the `after_implement` hook auto-detects
-it; you can also override at runtime with env `SCT_CODE_ROOT`).
+`codegen` receives the code root via `--code` (default `backend/src/main/java`);
+you can also override at runtime with env `SCT_CODE_ROOT`.
 
 If a rule has **no `checks`**, codegen falls back to a best-effort loose text match;
 if that still finds nothing, the test **fails clearly** (telling you to add `checks`)

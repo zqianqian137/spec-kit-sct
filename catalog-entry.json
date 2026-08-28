@@ -22,7 +22,7 @@
   },
   "provides": {
     "commands": 5,
-    "hooks": 4,
+    "hooks": 0,
     "presets": [
       {
         "id": "sct",

@@ -25,9 +25,9 @@ canonical ordering is Spec→Code→Test). Also accept `$ARGUMENTS` override.
   Output exactly this notice and end the command (no test files, no tokens spent):
 
   > ⏸️ test_timing=post：代码先行（SCT 正统时序 Spec→Code→Test）。实现期间不
-  > 生成测试——代码编写独占资源。测试生成与执行推迟到实现完成后：由
-  > after_implement 的 `sct.check` 钩子补生成并校验（此时代码已定稿、CodeGraph
-  > 最新，示例值/必填判定/FIELD_DRIFT 基于真实实现，一致性比对质量最高）。
+  > 生成测试——代码编写独占资源。测试生成与执行推迟到实现完成后，由用户手动
+  > 运行 `sct.codegen` + `sct.check`（此时代码已定稿、CodeGraph 最新，示例值/
+  > 必填判定/FIELD_DRIFT 基于真实实现，一致性比对质量最高）。
 
 - **`pre` (test-first, optional TDD-style variant)**: continue to Step 1 below.
   The forward guarantee chain is equivalent in both timings — the guarantee

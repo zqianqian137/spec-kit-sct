@@ -5,11 +5,11 @@ description: "SCT impact: lightweight change impact analysis (call chain + spec)
 # SCT Change Impact Analysis (call chain × spec)
 
 Reverse-trace code changes to affected spec scenarios. This command is
-**lightweight by design**: it runs after implementation (after_implement hook,
-right before `sct.check`) and reverse-traces the code that was just written.
-It must not consume significant AI resources. It is also the **tier gate for
-the whole SCT pipeline** — the tier decided here controls how many downstream
-agent turns are spent.
+**lightweight by design**: it is run **manually after implementation** (the user
+invokes it once the code is written), typically right before `sct.check`. It
+reverse-traces the code that was just written. It must not consume significant
+AI resources. It is also the **tier gate for the whole SCT pipeline** — the tier
+decided here controls how many downstream agent turns are spent.
 
 ## Step 0 — 变更分级（SOP 时长控制，先分级再决定跑多少）
 
@@ -24,7 +24,7 @@ Classify the change FIRST; machine-checkable criteria, round up when in doubt:
 Write the tier into change-impact.md header (`**变更级别**: L1|L2|L3`).
 
 **If L1**: write a minimal change-impact.md (tier + one-line rationale +
-"存量回归即可"), announce "L1 fast path — 后续 SCT 钩子全部跳过",
+"存量回归即可"), announce "L1 fast path — 后续 SCT 步骤全部跳过（由用户决定是否跑 codegen/check）",
 and **END the command here**. Do NOT update the SoT, do NOT generate tests,
 do NOT produce reports.
 
@@ -81,18 +81,18 @@ list, not free-hand from plan.md narrative. SoT 条目即验收口径——实�
 Announce the tier and dispatch accordingly:
 
 1. **L2/L3 + post timing** (default; SCT canonical Spec→Code→Test): skip
-   codegen entirely — implementation gets exclusive resources; `sct.check`
-   (after_implement) triggers deferred generation once the code is final.
+   codegen entirely — implementation gets exclusive resources; the user runs
+   `sct.codegen` (then `sct.check`) manually once the code is final.
 2. **L2/L3 + pre timing** (optional TDD-style variant, `_meta.test_timing: pre`):
-   run `sct.codegen` **in this same session** (same agent turn) — do not end
-   the turn and wait for a separate codegen hook. Scope generation to the
-   P0/P1 APIs (`--only API-001,...` for targeted regeneration).
+   the user MAY run `sct.codegen` **right after this command** (same session) —
+   scope generation to the P0/P1 APIs (`--only API-001,...` for targeted
+   regeneration). This is still a manual user decision, not an auto-fired hook.
 3. **check**: the changed-point review table (test-report.md section 5) is
    built from this file × execution results. L2/L3 only.
 4. **e2e**: L3 only — P0/P1 scenarios become Playwright scripts and the
    human-facing `E2E_TESTCASES.md` / `_intent_tests.json` exports.
 
-Also runs as the `after_implement` hook (paired with `sct.check`) to
-reverse-trace the just-written code and re-verify that the diff is fully
-covered by the recorded impact scope (L2/L3 changes only). The project has no
-git commit step, so there is no before_commit re-check.
+This command is invoked **manually** by the user after implementation (paired
+with `sct.check` when both are used) to reverse-trace the just-written code and
+re-verify that the diff is fully covered by the recorded impact scope (L2/L3
+changes only). SCT registers no lifecycle hooks, so nothing fires automatically.

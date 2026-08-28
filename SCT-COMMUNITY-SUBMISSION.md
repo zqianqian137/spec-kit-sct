@@ -72,8 +72,8 @@ Documentation:       https://github.com/zqianqian137/spec-kit-sct/blob/v1.0.0/RE
 Required Spec Kit:   >=0.9.0
 Tool dependencies:   codebase-memory-mcp (optional, required: false)
 Commands provided:   5  (speckit.sct.merge / codegen / check / impact / e2e)
-Hooks provided:      4  (after_implement x2, after_plan x1, after_e2e x1)
-Companion preset:    sct  (speckit.specify / plan / implement / constitution overrides)
+Hooks provided:      0  (NON-INTRUSIVE — no lifecycle hooks; the 5 commands run manually after implementation)
+Companion preset:    sct  (speckit.specify / plan / implement / constitution — hint-only overrides, never auto-runs SCT)
 Tags:                sct, spec-code-test, consistency, test-automation, change-impact
 
 Description:
@@ -122,7 +122,7 @@ spec-kit-sct/
 ├── catalog-entry.json         # 社区目录条目（提交用）
 ├── SCT-COMMUNITY-SUBMISSION.md # 本文件
 ├── commands/                  # 5 个 speckit.sct.* 命令
-├── scripts/                   # Python 引擎（merge/codegen/check/impact/e2e + 钩子入口）
+├── scripts/                   # Python 引擎（merge/codegen/check/impact/e2e）
 ├── templates/                 # 产物模板（SoT / 报告 / e2e / 单元测试约定等）
 └── presets/sct/               # 配套 preset：4 个核心命令覆盖
     ├── preset.yml
@@ -131,10 +131,12 @@ spec-kit-sct/
 
 ## 七、与 presets 页的关系（澄清）
 
-`extensions/sct/` 的核心能力在**脚本与钩子**里，而社区 **presets** 只能携带
-`templates/` 和 `commands/` 覆盖，无法携带脚本/钩子。因此 SCT 作为**扩展**
+`extensions/sct/` 的核心能力在**脚本引擎**里，而社区 **presets** 只能携带
+`templates/` 和 `commands/` 覆盖，无法携带脚本引擎。因此 SCT 作为**扩展**
 提交到社区扩展目录（本包）才是完整形态。
 
 本仓库同时内嵌了一个配套 preset (`presets/sct/`)，仅含 4 个核心命令覆盖
-`speckit.specify/plan/implement/constitution`，适合只想做轻量级命令覆盖、
-不需要完整引擎的项目。安装方式见 `README.md`。
+`speckit.specify/plan/implement/constitution`。**它只是可选的方法论提示
+（hint-only）**：覆盖项只追加 SCT 提示，绝不自动运行任何 SCT 命令、也绝不改动
+原始流程，适合只想在核心命令里看到 SCT 提醒、不需要完整引擎的项目。安装方式见
+`README.md`。

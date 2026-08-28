@@ -39,38 +39,11 @@ provides:
       file: commands/speckit.sct.e2e.md
       description: "Bridge change-impact.md + acceptance.yaml into Playwright e2e auto-regression scripts."
 
-  hooks:
-    # ====== 4 hook points (v2: impact moved to after_implement; no before_commit) ======
-    # Sequence is the canonical SCT Spec->Code->Test order. Both impact and check hang on
-    # after_implement, in order: impact (reverse-trace the just-written code) -> check
-    # (three-way consistency). The project has no git-commit flow, so before_commit is removed.
-    after_implement:
-      - id: sct_impact
-        enabled: true
-        optional: false
-        extension: "sct"
-        command: "speckit.sct.impact"
-        description: "Post-implementation change impact analysis (reverse-trace code -> affected spec scenarios); tier gate (L1 fast path) still applies"
-      - id: sct_check
-        enabled: true
-        optional: false
-        extension: "sct"
-        command: "speckit.sct.check"
-        description: "Three-way consistency check after implementation; first triggers deferred test generation (code is final)"
-    after_plan:
-      - id: sct_merge
-        enabled: true
-        optional: true
-        extension: "sct"
-        command: "speckit.sct.merge"
-        description: "Suggest generating acceptance.yaml (SoT) from plan outputs"
-    after_e2e:
-      - id: sct_bridge
-        enabled: true
-        optional: true
-        extension: "sct"
-        command: "speckit.sct.e2e"
-        description: "Generate Playwright scripts from change impact for auto-regression"
+  # NOTE: SCT is intentionally NON-INTRUSIVE. It provides the 5 `speckit.sct.*`
+  # commands only; it does NOT register any lifecycle hooks, so the original
+  # `specify / plan / implement / constitution` flow is never altered or
+  # auto-extended. The 5 SCT commands are invoked manually by the user after
+  # implementation — the user decides, per change, whether and when to run each.
 
 tags:
   - "sct"

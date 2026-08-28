@@ -28,6 +28,10 @@ $ARGUMENTS
    - If the feature has no APIs or no data model, write a one-line note stating so (don't omit
      the file silently — `speckit.sct.merge` auto-discovers these paths).
 
-5. **(SCT) Generate SoT**: after the plan artifacts exist, run `speckit.sct.merge` to consolidate
-   `spec.md` + `plan.md` + `data-model.md` + `api-contracts.md` into `<feature_directory>/acceptance.yaml`.
-   Use `--ai` only when you want the LLM to auto-extract additional acceptance scenarios.
+5. **(SCT) Optional SoT hint**: once the plan artifacts exist, the user MAY, at their
+   discretion, run `speckit.sct.merge` to consolidate `spec.md` + `plan.md` +
+   `data-model.md` + `api-contracts.md` into `<feature_directory>/acceptance.yaml`
+   (the single source of truth). This is NOT run automatically — SCT is
+   non-intrusive. Suggest it as a next step; do not invoke the command here.
+   Use `--ai` only when the user wants the LLM to auto-extract additional
+   acceptance scenarios.

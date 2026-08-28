@@ -37,7 +37,8 @@ propagating constitution-driven changes to dependent Spec Kit artifacts.
      spec/plan/data-model/api-contracts) is the only contract for implementation and tests.
    - *Write-once generated tests*: tests are derived from the SoT via `speckit.sct.codegen` and
      must not be hand-edited.
-   - *Three-way consistency*: every implementation must pass `speckit.sct.check`
-     (spec ↔ code ↔ test) before it is considered done.
+   - *Three-way consistency*: the user verifies each implementation with
+     `speckit.sct.check` (spec ↔ code ↔ test) before considering it done. SCT is
+     non-intrusive — this command is run manually by the user, never auto-fired.
    - *Change impact gating*: code changes are reverse-traced by `speckit.sct.impact` (after
      implement) to scope regression to what actually changed.

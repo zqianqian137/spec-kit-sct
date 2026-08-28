@@ -15,8 +15,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `speckit.sct.impact` — reverse-trace code changes to affected spec scenarios
   (P0/P1/P2) with an L1/L2/L3 tier decision; runs after implementation.
 - `speckit.sct.e2e` — bridge change-impact + SoT into Playwright auto-regression.
-- Four hook points: `after_implement` (impact → check), `after_plan` (merge),
-  `after_e2e` (bridge). `before_commit` intentionally omitted (no commit flow).
+- (Non-intrusive) SCT registers **no lifecycle hooks** — the 5 `speckit.sct.*`
+  commands run manually after implementation; the original `specify/plan/
+  implement` flow is untouched. (An earlier draft wired `after_implement` /
+  `after_plan` / `after_e2e` hooks, but that was dropped so SCT never affects
+  the base Spec Kit flow.)
 - Optional `codebase-memory-mcp` integration for enriched impact reverse tracing.
 - Brownfield incremental mode, CodeGraph-driven request enrichment, full
   exception-value coverage, and multi-dimensional impact matching.
@@ -29,5 +32,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   anchorless rules fail clearly instead of being silently skipped.
 - `test_scenarios.py` now fails with a clear pointer (API / E2E layers) instead of
   a false-green `NotImplementedError`.
-- `speckit.sct.codegen` accepts `--code` (code root for rule assertions); the
-  `after_implement` hook auto-detects it (override with env `SCT_CODE_ROOT`).
+- `speckit.sct.codegen` accepts `--code` (code root for rule assertions, default
+  `backend/src/main/java`); override at runtime with env `SCT_CODE_ROOT`.
+
+### Non-intrusive redesign
+- **Removed all lifecycle hooks.** `extension.yml` no longer declares
+  `provides.hooks`. SCT never alters the original `specify / plan / implement /
+  constitution` flow — the 5 `speckit.sct.*` commands are invoked **manually by
+  the user after implementation**; nothing auto-fires. This honors the principle
+  that test steps (merge / codegen / check / impact / e2e) wait until after
+  implementation and are executed only when the user confirms.
+- The companion preset (`presets/sct/`) is now **hint-only**: its overrides of
+  `speckit.specify / plan / implement / constitution` append optional SCT
+  methodology reminders but never auto-run an SCT command and never change the
+  original command behavior.

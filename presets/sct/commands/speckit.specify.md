@@ -29,4 +29,5 @@ $ARGUMENTS
    - Add a `## 业务规则` section (one `### BR-XXX` per rule: `- priority` / rule text) for
      business rules.
    - These sections are consumed by `speckit.sct.merge` to generate `acceptance.yaml` (the SoT).
-   - Run `speckit.sct.merge` after `speckit.plan` to produce `acceptance.yaml`.
+   - After `speckit.plan`, the user MAY run `speckit.sct.merge` (manually) to produce
+     `acceptance.yaml`. This is an optional hint — do NOT run the command here.
