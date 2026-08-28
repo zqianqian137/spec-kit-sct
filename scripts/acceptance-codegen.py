@@ -520,23 +520,257 @@ def example_value(field: dict):
     return None
 
 
-def gen_rule_tests(rules: list, out_dir: Path, code_root: str = "backend/src/main/java") -> list:
-    """为每条业务规则生成一个离线静态断言测试（遵循 templates/unit-test-template.py）
+# =====================================================================
+# JUnit 版本自动检测（避免与存量测试混用）
+# =====================================================================
 
-    执行机制：检查 SoT 登记的每条业务规则在代码中有对应落地证据
-    （注解/方法/异常/常量）。无需启动服务；找不到证据即失败（非假绿）。
+def detect_junit_version(java_test_root: str) -> str:
+    """扫描 java_test_root 下现有测试文件，识别 JUnit 版本。
 
-    规则需在 SoT 提供 `checks` 字段（列表）以精确断言，例如：
-      rules:
-        - id: BR-001
-          text: 单次导入不超过 1000 条用例
-          checks:
-            - kind: annotation
-              target: BatchImportRequest
-              expect: "@Max(1000)"
-            - kind: exception
-              expect: "BatchSizeExceededException"
-    未提供 checks 时做尽力而为的宽松文本匹配；仍无证据则明确 fail 并提示补锚点。
+    规则：若项目存量测试是 JUnit 4 则跟 4，否则默认 5（与用户约定一致）。
+    返回 "4" / "5"。若 JUnit 4 与 5 同时出现，打印警告并默认 5（让用户用 --junit 显式覆盖）。
+    """
+    root = Path(java_test_root)
+    if not root.exists():
+        return "5"
+    has4 = has5 = False
+    for f in root.rglob("*.java"):
+        try:
+            t = f.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        if "org.junit.Test" in t or "org.junit.runner.RunWith" in t:
+            has4 = True
+        if "org.junit.jupiter.api.Test" in t or "org.junit.jupiter.api" in t:
+            has5 = True
+    if has4 and not has5:
+        return "4"
+    if has4 and has5:
+        print("⚠️  项目中同时发现 JUnit 4 与 JUnit 5 测试。按用户规则不能混用，默认 5。"
+              "如需 JUnit 4 请用 --junit=4 显式覆盖。")
+        return "5"
+    return "5"
+
+
+# =====================================================================
+# Java 单元测试生成（JUnit + Mockito，零 Spring）
+# =====================================================================
+
+def _java_value(v) -> str:
+    """把 Python 字面量转成 Java 字面量（数字/布尔/字符串/null）"""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if v is None:
+        return "null"
+    s = str(v).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{s}"'
+
+
+def _java_class_name(full: str) -> tuple[str, str]:
+    """拆分 'com.demo.Foo' → ('com.demo', 'Foo')；无包名则包名返回空串"""
+    parts = full.rsplit(".", 1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return "", parts[0]
+
+
+def _simple_name(full: str) -> str:
+    return full.rsplit(".", 1)[-1]
+
+
+def _camel_to_snake(name: str) -> str:
+    """CamelCase 转 snake_case，用于 JUnit 4 / public 修饰符友好的方法名"""
+    import re as _re
+    s = _re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
+    s = _re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
+    return s.lower()
+
+
+def _render_java_test_class(rule: dict, junit_version: str):
+    """生成单个 JUnit 测试类源码；返回 (file_name, source) 或 None（缺关键字段）"""
+    target = rule.get("target") or {}
+    cls_full = target.get("class", "")
+    method = target.get("method", "")
+    mocks = rule.get("mocks") or []
+    test_cases = rule.get("test_cases") or []
+    if not cls_full or not method or not test_cases:
+        return None
+
+    pkg, cls_simple = _java_class_name(cls_full)
+    test_cls_name = cls_simple + "Test"
+    file_name = test_cls_name + ".java"
+
+    if junit_version == "5":
+        imports = [
+            f"import {cls_full};",
+            "import org.junit.jupiter.api.Test;",
+            "import org.junit.jupiter.api.extension.ExtendWith;",
+            "import org.mockito.InjectMocks;",
+            "import org.mockito.Mock;",
+            "import org.mockito.junit.jupiter.MockitoExtension;",
+            "import static org.junit.jupiter.api.Assertions.*;",
+        ]
+        class_anno = "@ExtendWith(MockitoExtension.class)"
+        test_anno = "@Test"
+        method_modifier = ""
+    else:  # JUnit 4
+        imports = [
+            f"import {cls_full};",
+            "import org.junit.Test;",
+            "import org.mockito.InjectMocks;",
+            "import org.mockito.Mock;",
+            "import org.mockito.runners.MockitoJUnitRunner;",
+            "import static org.junit.Assert.*;",
+        ]
+        class_anno = "@RunWith(MockitoJUnitRunner.class)"
+        test_anno = "@Test"
+        method_modifier = "public "
+
+    # 收集 test_cases 引用的异常/类，统一 import
+    referenced = set()
+    for tc in test_cases:
+        exp = tc.get("expect") or {}
+        for k in ("throws", "returns"):
+            v = exp.get(k)
+            if isinstance(v, str) and "." in v:
+                referenced.add(v)
+    for r in sorted(referenced):
+        if r != cls_full:
+            imports.append(f"import {r};")
+    imports = sorted(set(imports))
+
+    # mock 字段
+    mock_fields = []
+    for i, m in enumerate(mocks):
+        m_pkg, m_simple = _java_class_name(m)
+        field_name = (m_simple[0].lower() + m_simple[1:]) if m_simple else f"mock{i}"
+        mock_fields.append(f"    @Mock private {m_simple} {field_name};")
+    inject_field = f"    @InjectMocks private {cls_simple} service;"
+
+    # test 方法
+    methods = []
+    for tc in test_cases:
+        tc_name = tc.get("name") or f"test_{method}"
+        # 参数：优先用 call（整段方法调用），否则从 inputs dict 拼
+        call = tc.get("call")
+        if not call:
+            inputs = tc.get("inputs") or {}
+            if isinstance(inputs, dict) and inputs:
+                args = ", ".join(_java_value(v) for v in inputs.values())
+            else:
+                args = ""
+            call = f"service.{method}({args})"
+        exp = tc.get("expect") or {}
+
+        if "throws" in exp:
+            ex_full = exp["throws"]
+            ex_simple = _simple_name(ex_full)
+            if junit_version == "5":
+                method_body = (
+                    f"        assertThrows({ex_simple}.class, () -> {{\n"
+                    f"            {call};\n"
+                    f"        }});"
+                )
+                methods.append(
+                    f"    {test_anno}\n    {method_modifier}void {tc_name}() {{\n"
+                    f"{method_body}\n    }}"
+                )
+            else:
+                # JUnit 4: @Test(expected=...) 最干净
+                methods.append(
+                    f"    {test_anno}(expected = {ex_simple}.class)\n"
+                    f"    {method_modifier}void {tc_name}() {{\n"
+                    f"        {call};\n"
+                    f"    }}"
+                )
+        elif "returns" in exp:
+            ret = _java_value(exp["returns"])
+            method_body = (
+                f"        Object result = {call};\n"
+                f"        assertEquals({ret}, result);"
+            )
+            methods.append(
+                f"    {test_anno}\n    {method_modifier}void {tc_name}() {{\n"
+                f"{method_body}\n    }}"
+            )
+        else:
+            # 无 expect（默认 noThrow）：直接调用，让 JUnit 报告未预期异常
+            methods.append(
+                f"    {test_anno}\n    {method_modifier}void {tc_name}() {{\n"
+                f"        {call};\n"
+                f"    }}"
+            )
+
+    parts = []
+    if pkg:
+        parts.append(f"package {pkg};\n")
+    parts.append("\n".join(imports))
+    parts.append("")
+    rule_id = (rule.get("id") or "RULE").upper()
+    parts.append(
+        f"// === Assertion authority = SoT (acceptance.yaml#rules[{rule_id}]) ===\n"
+        f"// This test is derived from SoT test_cases; its expectation comes from the\n"
+        f"// requirement, NOT from the implementation under test. If the implementation\n"
+        f"// deviates from SoT, this test MUST fail -- do not edit this test to please code."
+    )
+    parts.append("")
+    parts.append(class_anno)
+    if junit_version == "4":
+        # JUnit 4 类需 public
+        parts.append(f"public class {test_cls_name} {{")
+    else:
+        parts.append(f"class {test_cls_name} {{")
+    if mock_fields:
+        parts.append("\n".join(mock_fields))
+        parts.append("")
+    parts.append(inject_field)
+    if methods:
+        parts.append("")
+        parts.append("\n\n".join(methods))
+    parts.append("}")
+    src = "\n".join(parts) + "\n"
+    return file_name, src
+
+
+def gen_java_unit_tests(rules: list, java_test_root: str, junit_version: str) -> list:
+    """为含 target+test_cases 的规则生成 JUnit + Mockito 测试类（无 Spring）
+
+    关键约束（用户要求）：
+      - 禁用 Spring Boot：不生成 @SpringBootTest / @MockBean / @Autowired
+      - 用 mock 方式：@Mock / @InjectMocks + MockitoExtension(JUnit5) 或 MockitoJUnitRunner(JUnit4)
+      - 不可混用：优先 JUnit 5；项目存量为 JUnit 4 则跟 4
+      - 断言来源 = SoT（防被代码带偏）：本函数只读 rule.target / mocks / test_cases，
+        绝不读取代码体来合成断言；代码是被测黑盒，test_cases.expect 唯一决定断言。
+    """
+    generated = []
+    root = Path(java_test_root)
+    for rule in rules:
+        result = _render_java_test_class(rule, junit_version)
+        if not result:
+            continue
+        file_name, src = result
+        cls_full = (rule.get("target") or {}).get("class", "")
+        pkg, _ = _java_class_name(cls_full)
+        out_dir = (root / pkg.replace(".", "/")) if pkg else root
+        out_dir.mkdir(parents=True, exist_ok=True)
+        file_path = out_dir / file_name
+        file_path.write_text(src, encoding="utf-8")
+        generated.append(str(file_path))
+    return generated
+
+
+# =====================================================================
+# Python 离线静态断言（fallback：仅当规则没有 target+test_cases 时使用）
+# =====================================================================
+
+def _gen_python_rule_fallbacks(rules: list, out_dir: Path,
+                               code_root: str = "backend/src/main/java") -> list:
+    """为缺少 target+test_cases 锚点的规则生成 Python 离线静态断言（fallback）
+
+    当所有规则都有 Java 锚点时，本函数生成一个空的 test_rules.py 含说明，
+    避免 pytest 报 "no tests ran"。
     """
     generated = []
     cr = str(code_root).replace("\\", "/")
@@ -544,8 +778,12 @@ def gen_rule_tests(rules: list, out_dir: Path, code_root: str = "backend/src/mai
     L.append('"""AUTO-GENERATED business rules tests from acceptance.yaml - DO NOT EDIT')
     L.append('模板约定: extensions/sct/templates/unit-test-template.py')
     L.append('执行机制: 离线静态断言（无需启动服务）——验证 SoT 登记的每条业务规则')
-    L.append('在代码中有对应落地证据（注解/方法/异常/常量）。断言期望来自 SoT，')
-    L.append('与实现无关；找不到证据即失败（非假绿）。')
+    L.append('在代码中有对应落地证据（注解/方法/异常/常量）。')
+    L.append("")
+    L.append('说明：单测层首选 JUnit + Mockito 的 Java 测试（gen_java_unit_tests）。')
+    L.append('本文件仅作为 fallback，对没有 target+test_cases 锚点的规则做声明存在性扫描。')
+    L.append('推荐做法：在 SoT 的 rules[].target.class/method/test_cases 提供完整 Java 锚点，')
+    L.append('本文件将退化为仅含说明的空 pytest 文件。')
     L.append('"""')
     L.append("import os")
     L.append("import pytest")
@@ -590,52 +828,76 @@ def gen_rule_tests(rules: list, out_dir: Path, code_root: str = "backend/src/mai
     L.append("")
     L.append("")
 
-    for rule in rules:
-        rule_num = rule["id"].split("-")[1].lower()
-        rule_id = f"br_{rule_num}"
-        rule_ref = rule["id"].upper()
-        priority = rule.get("priority", "")
-        text = rule.get("text", "")
-        checks = rule.get("checks") or []
-        intent_extra = f"（优先级 {priority}）" if priority else ""
-        L.append("")
-        L.append("def test_" + rule_id + "():")
-        L.append('    """[意图] ' + text + intent_extra)
-        L.append("")
-        L.append("    真相来源: acceptance.yaml#rules[" + rule_ref + "]（derived_from: " + rule.get("derived_from", "") + "）")
-        L.append("")
-        L.append("    Given: 依据规则 " + rule_ref + " 的前置条件构造约束上下文")
-        L.append("    When:  代码应声明并实现该约束")
-        L.append("    Then:  在代码中发现对应落地证据（注解/方法/异常/常量）")
-        L.append('    """')
-        if checks:
-            L.append("    checks = [")
-            for c in checks:
-                kind = c.get("kind", "text")
-                expect = c.get("expect", "")
-                target = c.get("target")
-                L.append("        {\"kind\": " + repr(kind) + ", \"expect\": " + repr(expect) + ", \"target\": " + repr(target) + "},")
-            L.append("    ]")
-            L.append("    for c in checks:")
-            L.append("        found, where = _scan_code(c[\"expect\"], c.get(\"kind\", \"text\"), c.get(\"target\"))")
-            L.append('    assert found, ("规则 ' + rule_ref + ' 未找到代码证据: " + str(c["expect"]) + " (kind=" + str(c.get("kind")) + "; 代码根=" + str(CODE_ROOT) + ")")')
-        else:
-            L.append("    # 无 checks 锚点：尽力而为的宽松文本匹配（弱证据），失败则明确提示补锚点")
-            L.append("    tokens = _loose_tokens(" + repr(text) + ")")
-            L.append("    found_any = False")
-            L.append("    for tok in tokens:")
-            L.append("        ok, _ = _scan_code(tok)")
-            L.append("        if ok:")
-            L.append("            found_any = True")
-            L.append("            break")
-            L.append("    if not found_any:")
-            L.append('        pytest.fail("规则 ' + rule_ref + ' 无可执行锚点(checks)，且代码中未发现文本线索 " + str(tokens) + "。 请在 SoT 的 rules[' + rule_ref + '] 增加 checks 字段（见 SCT 文档）以生成可执行断言。")')
+    if not rules:
+        # 所有规则都有 Java 锚点 → 仅占位说明，避免 pytest "no tests ran"
+        L.append("# 全部规则已在 Java 层（JUnit + Mockito）覆盖，本文件无测试。")
+    else:
+        for rule in rules:
+            rule_num = rule["id"].split("-")[1].lower()
+            rule_id = f"br_{rule_num}"
+            rule_ref = rule["id"].upper()
+            priority = rule.get("priority", "")
+            text = rule.get("text", "")
+            checks = rule.get("checks") or []
+            intent_extra = f"（优先级 {priority}）" if priority else ""
+            L.append("")
+            L.append("def test_" + rule_id + "():")
+            L.append('    """[意图] ' + text + intent_extra)
+            L.append("")
+            L.append("    真相来源: acceptance.yaml#rules[" + rule_ref + "]（derived_from: " + rule.get("derived_from", "") + "）")
+            L.append("")
+            L.append("    Given: 依据规则 " + rule_ref + " 的前置条件构造约束上下文")
+            L.append("    When:  代码应声明并实现该约束")
+            L.append("    Then:  在代码中发现对应落地证据（注解/方法/异常/常量）")
+            L.append('    """')
+            if checks:
+                L.append("    checks = [")
+                for c in checks:
+                    kind = c.get("kind", "text")
+                    expect = c.get("expect", "")
+                    target = c.get("target")
+                    L.append("        {\"kind\": " + repr(kind) + ", \"expect\": " + repr(expect) + ", \"target\": " + repr(target) + "},")
+                L.append("    ]")
+                L.append("    for c in checks:")
+                L.append("        found, where = _scan_code(c[\"expect\"], c.get(\"kind\", \"text\"), c.get(\"target\"))")
+                L.append('    assert found, ("规则 ' + rule_ref + ' 未找到代码证据: " + str(c["expect"]) + " (kind=" + str(c.get("kind")) + "; 代码根=" + str(CODE_ROOT) + ")")')
+            else:
+                L.append("    # 无任何锚点：宽松文本匹配 + 明确提示补 Java 或 checks 锚点")
+                L.append("    tokens = _loose_tokens(" + repr(text) + ")")
+                L.append("    found_any = False")
+                L.append("    for tok in tokens:")
+                L.append("        ok, _ = _scan_code(tok)")
+                L.append("        if ok:")
+                L.append("            found_any = True")
+                L.append("            break")
+                L.append("    if not found_any:")
+                L.append('        pytest.fail("规则 ' + rule_ref + ' 在 Java 单测层（首选 JUnit + Mockito）和 Python fallback 层均无可执行锚点。\\n"')
+                L.append('                 "  推荐：在 SoT 的 rules[' + rule_ref + '] 增加 target.class/method + test_cases 以生成 Java 单元测试；\\n"')
+                L.append('                 "  或在 checks 字段声明代码证据（注解/方法/异常）。")')
     body = "\n".join(L) + "\n"
     file_path = out_dir / "test_rules.py"
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(body, encoding="utf-8")
     generated.append(str(file_path))
     return generated
+
+
+def gen_rule_tests(rules: list, out_dir: Path, code_root: str = "backend/src/main/java",
+                   java_test_root: str = "src/test/java", junit_version: str = "5") -> list:
+    """分发器：单测层首选 JUnit + Mockito Java 测试，无锚点规则保留 Python fallback
+
+    行为：
+      - 含 target.class + target.method + test_cases 的规则 → gen_java_unit_tests
+        （JUnit 5: @ExtendWith(MockitoExtension.class)；JUnit 4: @RunWith(MockitoJUnitRunner.class)）
+      - 其余规则 → _gen_python_rule_fallbacks（离线静态扫描，明确标注为 fallback）
+    """
+    java_files = gen_java_unit_tests(rules, java_test_root, junit_version)
+    fallback_rules = [r for r in rules
+                      if not ((r.get("target") or {}).get("class")
+                              and (r.get("target") or {}).get("method")
+                              and r.get("test_cases"))]
+    py_files = _gen_python_rule_fallbacks(fallback_rules, out_dir, code_root)
+    return java_files + py_files
 
 
 def gen_scenario_tests(features: list, out_dir: Path) -> list:
@@ -824,6 +1086,12 @@ def main():
     parser.add_argument("--code", default="backend/src/main/java",
                         help="代码根目录（规则测试在此做离线静态断言；也可用环境变量 "
                              "SCT_CODE_ROOT 在运行时覆盖生成的默认值）")
+    parser.add_argument("--java-test-root", default="src/test/java",
+                        help="Java 测试根目录（有 target+test_cases 锚点的规则在此生成 "
+                             "JUnit + Mockito 测试类）")
+    parser.add_argument("--junit", default="auto", choices=["auto", "4", "5"],
+                        help="JUnit 版本：auto(默认，按 detect_junit_version 自动识别；"
+                             "优先 5；项目存量为 4 则跟 4；不可混用)、4、5")
     args = parser.parse_args()
 
     spec_path = Path(args.spec)
@@ -931,7 +1199,13 @@ def main():
     print(f"  + {meta_path}")
 
     print("Generating rule tests...")
-    rule_files = gen_rule_tests(rules, out_dir, args.code)
+    junit_version = args.junit
+    if junit_version == "auto":
+        junit_version = detect_junit_version(args.java_test_root)
+        print(f"JUnit version auto-detected: {junit_version}")
+    else:
+        print(f"JUnit version (explicit): {junit_version}")
+    rule_files = gen_rule_tests(rules, out_dir, args.code, args.java_test_root, junit_version)
     for f in rule_files:
         print(f"  + {f}")
 

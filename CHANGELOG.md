@@ -46,3 +46,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `speckit.specify / plan / implement / constitution` append optional SCT
   methodology reminders but never auto-run an SCT command and never change the
   original command behavior.
+
+### Hardened — unit tests are SoT-anchored (anti code-bias)
+- Generated Java unit tests now carry an inline **assertion-authority comment**
+  citing `acceptance.yaml#rules[<id>]` as the sole source of truth, explicitly
+  stating the expectation comes from the requirement, not the implementation, and
+  must fail (not be edited to please code) if the implementation deviates.
+- `gen_java_unit_tests` documents that it reads only `rule.target / mocks /
+  test_cases` and never opens the code body to synthesize assertions — the unit
+  test is derived from the SoT, the code is a black box under test.
+- The assertion-authority comment is emitted in ASCII (English) so generated
+  `.java` files compile under a default (GBK) Windows `javac` without `-encoding
+  UTF-8`.
