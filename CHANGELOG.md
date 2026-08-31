@@ -3,6 +3,35 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.0.2] - 2026-08-31
+
+### Fixed — `sct.merge` and `sct.e2e` commands were empty
+- The two command files shipped in the extension (`commands/speckit.sct.merge.md`,
+  `commands/speckit.sct.e2e.md`) were **empty since v1.0.0**, so invoking
+  `/speckit.sct.merge` or `/speckit.sct.e2e` from an agent produced no effect even though
+  the underlying scripts (`spec-merge.py`, `change-impact-e2e-bridge.py`) worked. Both
+  commands are now fully written.
+
+### Added — `speckit.sct.merge`
+- Guided SoT build: input collection table, `coverage_mode` / `test_timing` decision, and
+  the exact `spec-merge.py` invocation.
+- **Re-merge safety**: warns that re-running merge overwrites an existing
+  `acceptance.yaml` and instructs writing to a temp path + diffing so hand-enriched
+  fields are not silently lost.
+- **SoT completeness self-check**: requires reporting the counts of scenarios with full
+  given/when/then, APIs with request+errors, and rules carrying `target` + `test_cases`
+  vs `checks` — so a SoT that cannot produce executable tests is surfaced immediately
+  instead of implying full coverage.
+
+### Added — `speckit.sct.e2e`
+- **L3-only gate**: reads `变更级别` from `change-impact.md`; L1/L2 stop with a notice.
+- Documents the `e2e:` scenario block schema (W1 scope: `upload_file` action,
+  `ui_message` assertion, `pre_steps`), the `e2e/fixtures/` path convention, and all four
+  artifacts (`<id>.spec.js`, `E2E_TESTCASES.md`, `_intent_tests.json`, `_summary.json`).
+- Requires reporting **in-scope scenarios without an `e2e:` block** as explicit coverage
+  gaps, and states that generated specs are **not** runnable-as-is (selector / text review
+  + `// TODO` for unsupported action or assertion types).
+
 ## [1.0.1] - 2026-08-28
 
 ### Added — Java unit tests now follow the classic AAA pattern
