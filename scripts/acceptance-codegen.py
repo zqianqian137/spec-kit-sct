@@ -1519,6 +1519,13 @@ def main():
     parser.add_argument("--only",
                         help="只生成指定 API 的接口测试（逗号分隔 API ID，如 API-001,API-003）；"
                              "规则/场景测试不受影响；定向生成不推进 hash 缓存")
+    parser.add_argument("--skip-rules", action="store_true",
+                        help="跳过 Java/规则测试（仅生成接口测试 + conftest；纯 API-only 项目用）")
+    parser.add_argument("--skip-api-tests", action="store_true",
+                        help="跳过接口测试（仅生成 Java/规则测试 + test_rules；纯库/工具项目用）")
+    parser.add_argument("--only-rules",
+                        help="只生成指定 rule 的测试（逗号分隔 rule ID，如 BR-001,BR-002；"
+                             "配合 --skip-api-tests 用于精准单测再生成")
     parser.add_argument("--code", default="backend/src/main/java",
                         help="代码根目录（规则测试在此做离线静态断言；也可用环境变量 "
                              "SCT_CODE_ROOT 在运行时覆盖生成的默认值）")
@@ -1566,6 +1573,14 @@ def main():
     graph_default = graph_base_url(codegraph)
     base_url = args.base_url or os.getenv("BASE_URL") or graph_default
     global_exceptions = (codegraph or {}).get("global_exceptions") or []
+
+    # 预检：若将生成 API 测试但 BASE_URL 用的是兜底值且无 token 提示，提醒用户运行需环境变量
+    if not args.skip_api_tests:
+        if base_url == "http://localhost:8080" and not codegraph and not args.base_url:
+            print("ℹ️  base_url 用的是默认值 http://localhost:8080（未传 --base-url / 未提供 codegraph）。")
+            print("    生成的 test_api_*.py 需要运行前设置：")
+            print("      BASE_URL=http://your-host:port   API_AUTH_TOKEN=xxx   pytest tests/generated/")
+            print("    也可以用 --base-url 显式传入，或 --skip-api-tests 跳过本层生成。")
     if codegraph:
         print(f"CodeGraph loaded: {len(graph_index)} APIs, base_url={base_url}, "
               f"global_exceptions={len(global_exceptions)}")
@@ -1577,6 +1592,11 @@ def main():
     apis = acceptance.get("apis", [])
     rules = acceptance.get("rules", [])
     features = acceptance.get("features", [])
+
+    if args.only_rules:
+        keep_rules = {x.strip() for x in args.only_rules.split(",") if x.strip()}
+        rules = [r for r in rules if r.get("id") in keep_rules]
+        print(f"--only-rules：只生成 {len(rules)} 条 rule（{sorted(keep_rules)}）")
 
     if args.only:
         keep = {x.strip().upper() for x in args.only.split(",") if x.strip()}
@@ -1598,21 +1618,30 @@ def main():
         print(f"JUnit version auto-detected: {junit_version}")
     else:
         print(f"JUnit version (explicit): {junit_version}")
-    rule_files, binding_drifts = gen_rule_tests(rules, out_dir, args.code, args.java_test_root, junit_version)
-    for f in rule_files:
-        print(f"  + {f}")
-    if binding_drifts:
-        print(f"⚠️  {len(binding_drifts)} 个绑定漂移（BINDING_DRIFT），详见 COVERAGE_REPORT.md（需人工裁决 SoT 还是代码）")
+    rule_files, binding_drifts = ([], [])
+    if not args.skip_rules:
+        rule_files, binding_drifts = gen_rule_tests(rules, out_dir, args.code, args.java_test_root, junit_version)
+        for f in rule_files:
+            print(f"  + {f}")
+        if binding_drifts:
+            print(f"⚠️  {len(binding_drifts)} 个绑定漂移（BINDING_DRIFT），详见 COVERAGE_REPORT.md（需人工裁决 SoT 还是代码）")
+    else:
+        print("⏭️  --skip-rules：跳过规则测试生成")
 
-    print("Generating API tests...")
-    api_files, field_drifts, api_annotations = gen_api_tests(apis, out_dir, graph_index,
-                                                             base_url, global_exceptions)
-    for f in api_files:
-        print(f"  + {f}")
+    api_files, field_drifts, api_annotations = ([], [], {})
+    conftest_path = None
+    if not args.skip_api_tests:
+        print("Generating API tests...")
+        api_files, field_drifts, api_annotations = gen_api_tests(apis, out_dir, graph_index,
+                                                                 base_url, global_exceptions)
+        for f in api_files:
+            print(f"  + {f}")
 
-    # 生成 conftest.py：把 BASE_URL 与 auth 留给 pytest 启动时按环境变量读
-    conftest_path = gen_conftest(out_dir, base_url)
-    print(f"  + {conftest_path}  (BASE_URL={base_url} ; set API_AUTH_TOKEN for auth)")
+        # 生成 conftest.py：把 BASE_URL 与 auth 留给 pytest 启动时按环境变量读
+        conftest_path = gen_conftest(out_dir, base_url)
+        print(f"  + {conftest_path}  (BASE_URL={base_url} ; set API_AUTH_TOKEN for auth)")
+    else:
+        print("⏭️  --skip-api-tests：跳过接口测试生成")
 
     # --only 定向生成：合并上次 meta 的标注/漂移——meta 是 sct.check 报告的数据源，
     # 不能因定向生成丢失未涉及 API 的实现标注与 FIELD_DRIFT

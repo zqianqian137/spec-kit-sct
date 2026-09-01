@@ -3,6 +3,27 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.0.4] - 2026-09-01
+
+### Added — `sct.codegen` 独立开关 + `sct.check` 接口层预检
+- **`--skip-rules` / `--skip-api-tests` / `--only-rules`** on `acceptance-codegen.py`:
+  - `--skip-rules`：纯 API-only 项目，只生成 `test_api_*.py` + `conftest.py`
+  - `--skip-api-tests`：纯库/工具项目，只生成规则/单测
+  - `--only-rules BR-001,BR-002`：定向再生成指定 rule（配合 `--skip-api-tests` 用）
+  - 这三层彼此**独立可选**——按项目类型选最合适的组合
+- **`--skip-api-tests` / `--skip-rule-tests` / `--prereq-timeout`** on `consistency-check.py`:
+  - 跳过对应测试层；预检失败时不再让 pytest 跑出无意义的红
+- **`preflight_api_tests`** 在 `sct.check` 起跑前探测：
+  - `BASE_URL` 可达性（HEAD，超时默认 3s，可调）
+  - `API_AUTH_TOKEN` 存在性（提示用，不强制）
+  - **不可达且无 token** → 退出码 **3**，打印结构化诊断给 agent，
+    让用户在对话框确认「修环境再跑 / 跳过接口层（`--skip-api-tests`）」
+  - **可达** → 继续正常 pytest
+
+### Changed
+- `acceptance-codegen.py` 在生成接口测试前会提示「base_url 用默认值」+ 给出运行所需环境变量（一次性提醒，非阻塞）。
+- 内网手册同步更新：依赖表 + 新增「跳过开关与预检」章节。
+
 ## [1.0.3] - 2026-09-01
 
 ### Fixed — API tests were actually broken in three concrete ways

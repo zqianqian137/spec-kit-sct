@@ -53,6 +53,7 @@ CodeGraph 整合：
 import yaml
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -704,6 +705,56 @@ def print_summary(issues: List[dict], stats: dict, report_path: str | None, fina
     return 0 if final_ok else 1
 
 
+def preflight_api_tests(tests_root: Path, timeout: float) -> int:
+    """接口测试预检：BASE_URL 是否存在且可达、API_AUTH_TOKEN 是否提示需要。
+
+    返回 0 = 通过；3 = 缺前（agent 收到退出码 3 应让用户在对话框确认是否跳过接口层）。
+    """
+    api_files = list(tests_root.glob("test_api_*.py"))
+    if not api_files:
+        return 0  # 没有接口测试，不需预检
+    base_url = os.getenv("BASE_URL", "http://localhost:8080")
+    has_token = bool(os.getenv("API_AUTH_TOKEN"))
+
+    # 可达性探测：HEAD BASE_URL，超时短（3s）足够
+    reachable = False
+    detail = ""
+    try:
+        import urllib.request, urllib.error
+        req = urllib.request.Request(base_url, method="HEAD")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            reachable = (r.status < 500)
+    except urllib.error.URLError as e:
+        detail = f"连接失败：{e.reason}"
+    except Exception as e:
+        detail = f"{type(e).__name__}: {e}"
+
+    print("🔎 接口测试预检：")
+    print(f"   BASE_URL = {base_url}")
+    print(f"   API_AUTH_TOKEN = {'已设置' if has_token else '未设置（开放接口/本地开发可继续）'}")
+    print(f"   可达性 = {'可达' if reachable else f'不可达（{detail}）'}")
+
+    if reachable:
+        return 0
+    if has_token:
+        # 设了 token 但连不上 → 网络/服务问题
+        print()
+        print("⚠️  [prereq] BASE_URL 设了 token 但服务不可达——可能是服务未启动、端口被挡、或环境不通。")
+        print("    退出码 3 表示「接口测试缺前」，将作为工具结果反馈给 agent；")
+        print("    在对话框确认是否：")
+        print("      a) 先修环境（启动服务/换 BASE_URL），再重跑 sct.check")
+        print("      b) 跳过接口层：`sct.check --skip-api-tests ...`")
+        return 3
+    print()
+    print("⚠️  [prereq] 接口测试缺前：")
+    print(f"    - BASE_URL 不可达：{detail or '服务未监听'}")
+    print("    - API_AUTH_TOKEN 未设")
+    print("    在对话框确认输入：")
+    print("      1) 提供 token / 修环境后再跑：`export API_AUTH_TOKEN=...` 后重跑 sct.check")
+    print("      2) 跳过接口层：`sct.check --skip-api-tests ...`")
+    return 3
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--spec", required=True)
@@ -723,11 +774,25 @@ def main():
                         help="覆盖模式：full=全量（默认）/ incremental=增量（存量项目只测变更，"
                              "缺省读 SoT _meta.coverage_mode）")
     parser.add_argument("--report", help="详细测试报告输出路径（markdown）")
+    parser.add_argument("--skip-api-tests", action="store_true",
+                        help="跳过接口测试层（test_api_*.py）；用于环境无 BASE_URL/token 时"
+                             "只跑规则测试 + 覆盖率 + 漂移门禁，避免阻塞。")
+    parser.add_argument("--skip-rule-tests", action="store_true",
+                        help="跳过规则测试层（test_rules.py / Java 单测）；用于只关心 API 层的场景")
+    parser.add_argument("--prereq-timeout", type=float, default=3.0,
+                        help="API 测试预检 BASE_URL 可达性的超时（秒），默认 3")
     args = parser.parse_args()
 
     spec = load_acceptance(Path(args.spec))
     code_apis = extract_code_apis(Path(args.code), args.scope)
     test_cov = extract_test_coverage(Path(args.tests))
+
+    # 接口测试预检：BASE_URL 可达性 + token 提示；缺前则退出 3，让 agent 让用户在对话框确认
+    if not args.skip_api_tests and not args.skip_rule_tests:
+        # skip_rule_tests 不影响 API 预检；只 skip_api_tests 才免预检
+        rc = preflight_api_tests(Path(args.tests), args.prereq_timeout)
+        if rc == 3:
+            sys.exit(3)
 
     # 覆盖模式解析优先级：CLI --mode > SoT _meta.coverage_mode > full
     mode = args.mode or (spec.get("_meta") or {}).get("coverage_mode") or "full"

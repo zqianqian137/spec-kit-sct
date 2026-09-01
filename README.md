@@ -41,7 +41,7 @@ methodology hints; it never auto-runs an SCT command either.
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.3.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.4.zip
 ```
 
 Or install from a local checkout during development:
@@ -59,7 +59,7 @@ preset. Its overrides only append **optional methodology hints** (keep an
 auto-run an SCT command and never alter the original flow:
 
 ```bash
-specify preset add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.3.zip
+specify preset add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.4.zip
 ```
 
 The preset lives in `presets/sct/` and requires the `sct` extension (or can be
