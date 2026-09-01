@@ -33,6 +33,7 @@ import json
 import argparse
 import hashlib
 import re
+import os
 from pathlib import Path
 from datetime import datetime
 
@@ -86,6 +87,52 @@ def graph_base_url(codegraph: dict | None) -> str:
     if codegraph:
         return (codegraph.get("project") or {}).get("base_url", "http://localhost:8080")
     return "http://localhost:8080"
+
+
+def gen_conftest(out_dir: Path, default_base_url: str) -> str:
+    """为 test_api_*.py 生成 conftest.py：提供 session fixture（带 auth）、base_url。
+
+    让生成的 API 测试"配置驱动"——pytest 启动后只读环境变量，不需要重生成代码：
+      BASE_URL        默认 base_url（CLI/codegraph/兜底 三级已算好；可被环境变量覆盖）
+      API_AUTH_TOKEN        可选；存在则设为 Bearer token
+      API_AUTH_HEADER      可选；自定义头部名（默认 Authorization）
+    """
+    default = default_base_url.replace("\\", "\\\\")  # 避免反斜杠在 docstring 里被解释
+    conftest_code = f'''"""
+AUTO-GENERATED FROM acceptance.yaml - DO NOT EDIT
+codegen: 配置驱动的 API 测试 fixture。pytest 启动时读环境变量，无需重新生成。
+"""
+import os
+import pytest
+import requests
+
+
+@pytest.fixture
+def session():
+    """带鉴权的 requests.Session；base_url 与 Authorization 头部均从环境变量读。
+
+    用法：
+        BASE_URL=http://staging.internal:8080 \\
+        API_AUTH_TOKEN=eyJhbGciOi... \\
+        pytest tests/generated/
+
+    缺 API_AUTH_TOKEN → 不发 Authorization；适用于开放接口或本地未鉴权环境。
+    s.base_url 会被 generated/test_api_*.py 通过 session.base_url 取用（不要硬编码）。
+    """
+    s = requests.Session()
+    s.base_url = os.getenv("BASE_URL", "{default}")
+    token = os.getenv("API_AUTH_TOKEN")
+    if token:
+        header_name = os.getenv("API_AUTH_HEADER", "Authorization")
+        s.headers[header_name] = f"Bearer {{token}}"
+    # 关闭 keep-alive 让连接错更明显，避免复用陈旧 socket
+    s.headers.setdefault("Connection", "close")
+    yield s
+    s.close()
+'''
+    path = out_dir / "conftest.py"
+    path.write_text(conftest_code, encoding="utf-8")
+    return str(path)
 
 
 def graph_field_map(graph: dict | None) -> dict:
@@ -414,18 +461,21 @@ API: {api_id} {api_name}
 Method: {method}
 Path: {path}
 {graph_note}{gx_lines}
+
+依赖注入: BASE_URL / Authorization 都由同目录 conftest.py 提供（环境变量覆盖）：
+  - BASE_URL         (默认见 conftest.py)
+  - API_AUTH_TOKEN   (可选；Bearer token;  缺则不设 Authorization)
 """
 import pytest
 import requests
 
-BASE_URL = "{base_url}"
 API_PATH = "{path}"
-
+HTTP_METHOD = "{method.lower()}"
 '''
     for case in success_cases + error_cases:
         template += f'''
 
-def {case["name"]}():
+def {case["name"]}(session):
     """[意图] {case["intent"]}
 
     真相来源: {case["source"]}
@@ -438,11 +488,15 @@ def {case["name"]}():
     # Given：构造请求体（字段来自 SoT request.body 定义）
     payload = {case["request"]}
 
-    # When：触发单一动作
-    response = requests.{method.lower()}(
-        BASE_URL + API_PATH,
-        json=payload,
-    )
+    # When：GET 用查询参数，其余用 JSON body——避免 GET 把 payload 当 body 发出去
+    if HTTP_METHOD == "get":
+        response = session.get(session.base_url + API_PATH, params=payload)
+    else:
+        response = session.request(
+            HTTP_METHOD.upper(),
+            session.base_url + API_PATH,
+            json=payload,
+        )
 
     # Then：断言预期结果（只在本段断言）
     assert response.status_code == {case["expected_status"]}, \\
@@ -1474,6 +1528,11 @@ def main():
     parser.add_argument("--junit", default="auto", choices=["auto", "4", "5"],
                         help="JUnit 版本：auto(默认，按 detect_junit_version 自动识别；"
                              "优先 5；项目存量为 4 则跟 4；不可混用)、4、5")
+    parser.add_argument("--base-url",
+                        help="接口测试 base_url（优先级：CLI --base-url > 环境变量 BASE_URL > "
+                             "codegraph.project.base_url > 默认 http://localhost:8080）。"
+                             "实际生效值由生成的 conftest.py 在 pytest 启动时读取环境变量 BASE_URL，"
+                             "此处仅作为 conftest.py 的默认值")
     args = parser.parse_args()
 
     spec_path = Path(args.spec)
@@ -1503,7 +1562,9 @@ def main():
 
     codegraph = load_codegraph(args.codegraph)
     graph_index = build_graph_index(codegraph)
-    base_url = graph_base_url(codegraph)
+    # base_url 解析顺序：CLI --base-url > 环境变量 BASE_URL > codegraph.project.base_url > 默认
+    graph_default = graph_base_url(codegraph)
+    base_url = args.base_url or os.getenv("BASE_URL") or graph_default
     global_exceptions = (codegraph or {}).get("global_exceptions") or []
     if codegraph:
         print(f"CodeGraph loaded: {len(graph_index)} APIs, base_url={base_url}, "
@@ -1548,6 +1609,10 @@ def main():
                                                              base_url, global_exceptions)
     for f in api_files:
         print(f"  + {f}")
+
+    # 生成 conftest.py：把 BASE_URL 与 auth 留给 pytest 启动时按环境变量读
+    conftest_path = gen_conftest(out_dir, base_url)
+    print(f"  + {conftest_path}  (BASE_URL={base_url} ; set API_AUTH_TOKEN for auth)")
 
     # --only 定向生成：合并上次 meta 的标注/漂移——meta 是 sct.check 报告的数据源，
     # 不能因定向生成丢失未涉及 API 的实现标注与 FIELD_DRIFT
