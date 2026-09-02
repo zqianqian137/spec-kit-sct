@@ -3,6 +3,22 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.1.1] - 2026-09-02
+
+### Added — README 方法论详解章节（社区展示 + 内网研读）
+- 新增 **Methodology** 大章节（README 第 13 行起，含中文简介与 Mermaid 流水线图）：
+  1. 要解决的问题（spec/code/test 三方漂移）
+  2. SoT 唯一真相源
+  3. 前向保证链 vs 传统"事后修补"对比表
+  4. write-once 派生测试 + "断言永不来自代码"（反推断言 = 自己出题自己改卷）
+  5. 8 类漂移归因表（断掉的是哪一环）
+  6. check 是确认门不是补救兜底
+  7. 分级闸门 L1/L2/L3（token 按风险花）
+  8. 测试存在性 ≠ 测试有效性（sct.verify 三态，UNPROVEN ≠ PASS）
+  9. 与 TDD / BDD / 覆盖率工具 / LLM 审查的定位对比表
+  10. SCT 要消灭的 6 种反模式
+- 顶部简介区加中文一句话定位；删除旧的 ASCII 流程图（由 Mermaid 替代）
+
 ## [1.1.0] - 2026-09-02
 
 ### Added — `sct.verify` 测试有效性验证门（补上"测试真能抓住 bug 吗"的实质缺口）
