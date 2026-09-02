@@ -3,6 +3,31 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.1.0] - 2026-09-02
+
+### Added — `sct.verify` 测试有效性验证门（补上"测试真能抓住 bug 吗"的实质缺口）
+
+借鉴社区扩展调研结论（TDD Extension 变异测试 / Golden Demo 行为 oracle /
+Vurnix Honest Gate / Verify Tasks 幻影检测），新增第 6 个命令：
+
+- **`scripts/verification-gate.py`** + **`commands/speckit.sct.verify.md`**
+- **PHANTOM_TASK 幻影检测**：tasks.md 标 `[X]` 的任务在代码中找不到类名/方法名证据
+  → 抓"声称做了实际没做"；与 `sct.check` 的 `MISSING_IMPL` 反向互补
+- **COMPILE 编译门**：自动探测 pom.xml / build.gradle 并执行测试编译
+  （`mvn -DskipTests test-compile` / `gradle compileTestJava`），抓"生成了但编译不过"
+- **REAL_TESTS 真实测试计数**：读 surefire `TEST-*.xml` 实际执行数，
+  抓"声称有测试但实际执行 0 个"
+- **MUTATION 变异强度（可选）**：PITest `mutations.xml` 变异得分（或
+  `--mutation-score` 直接给分，兼容 mutmut 等），低于阈值（默认 60%）→ BLOCK
+- **诚实三态输出**：`PASS` / `BLOCK` / `UNPROVEN`（退出码 0/1/2），
+  整体取最严（BLOCK > UNPROVEN > PASS）——**UNPROVEN ≠ PASS**，
+  没验证就不许冒充通过；内网无 Maven/surefire 时明确提示而非静默放行
+
+### Added — 社区目录提交元数据
+- extension.yml / catalog-entry.json 增加 `category: process` + `effect: read-write`
+  （spec-kit 社区目录必需字段）
+- 命令数 5 → 6；catalog tags 增补 verification / mutation-testing
+
 ## [1.0.6] - 2026-09-02
 
 ### Fixed — 移植 ai-test-platform 实战（sct-improvements.md F-1~F-20）全部问题

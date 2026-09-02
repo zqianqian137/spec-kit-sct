@@ -3,12 +3,17 @@ schema_version: "1.0"
 extension:
   id: sct
   name: "Spec-Code-Test Consistency (SCT)"
-  version: "1.0.6"
-  description: "Speckit extension implementing the SCT methodology: a single source of truth (acceptance.yaml), auto-generated write-once tests, three-way spec↔code↔test consistency checks, and change-impact / tier-gated workflows."
+  version: "1.1.0"
+  description: "Speckit extension implementing the SCT methodology: a single source of truth (acceptance.yaml), auto-generated write-once tests, three-way spec↔code↔test consistency checks, test-effectiveness verification, and change-impact / tier-gated workflows."
   author: zqianqian137
   repository: https://github.com/zqianqian137/spec-kit-sct
   homepage: https://github.com/zqianqian137/spec-kit-sct
   license: MIT
+  # Community catalog metadata (fields shown on the spec-kit community
+  # extensions page). category: docs|code|process|integration|visibility
+  # effect: read-only | read-write
+  category: process
+  effect: read-write
 
 requires:
   speckit_version: ">=0.9.0"
@@ -38,11 +43,14 @@ provides:
     - name: speckit.sct.e2e
       file: commands/speckit.sct.e2e.md
       description: "Bridge change-impact.md + acceptance.yaml into Playwright e2e auto-regression scripts."
+    - name: speckit.sct.verify
+      file: commands/speckit.sct.verify.md
+      description: "Test-effectiveness gate with honest three-state output (PASS/BLOCK/UNPROVEN): phantom task detection, real compile, real executed test count, optional mutation score. Answers whether tests actually catch bugs."
 
-  # NOTE: SCT is intentionally NON-INTRUSIVE. It provides the 5 `speckit.sct.*`
+  # NOTE: SCT is intentionally NON-INTRUSIVE. It provides the 6 `speckit.sct.*`
   # commands only; it does NOT register any lifecycle hooks, so the original
   # `specify / plan / implement / constitution` flow is never altered or
-  # auto-extended. The 5 SCT commands are invoked manually by the user after
+  # auto-extended. The 6 SCT commands are invoked manually by the user after
   # implementation — the user decides, per change, whether and when to run each.
 
 tags:

@@ -1,142 +1,79 @@
-# SCT 扩展 — 社区发布提交包
+# SCT — Spec Kit Community Extension Submission
 
-本目录是一个**可直接发布到 Spec Kit 社区扩展目录**的独立扩展仓库。
-下方是提交所需的全部材料与步骤。
+本文件是向 **Spec Kit 官方社区目录**提交 SCT 扩展的对照清单，
+把仓库内的元数据文件映射到官方提交流程所需字段。
 
-> ✅ 本包已指向真实仓库 `zqianqian137/spec-kit-sct`，所有 `extension.yml`、
-> `README.md`、`catalog-entry.json`、`LICENSE` 中的地址/作者均已替换完毕，
-> 发布时无需再手动替换。
+> 官方目录页：https://github.github.io/spec-kit/community/extensions.html
+> （数据源：github/spec-kit 仓库 `extensions/catalog.community.json`）
+> 提交入口：向 github/spec-kit 仓库提 **Issue**（自动使用
+> `.github/ISSUE_TEMPLATE/extension_submission.yml` 模板），或直接 PR 更新
+> `extensions/catalog.community.json`。
+> 维护者只校验目录条目完整与格式正确，**不审查扩展代码本身**——安装前自行评审。
 
----
+## 1. 提交字段对照（全部可从本仓库文件取值）
 
-## 一、提交方式（重要）
+| Issue 模板字段 | 值 | 来源 |
+|---|---|---|
+| Extension ID | `sct` | `extension.yml` `extension.id` |
+| Extension Name | `Spec-Code-Test Consistency (SCT)` | `extension.yml` `extension.name` |
+| Version | `1.1.0` | `extension.yml` `extension.version` |
+| Description (<200 chars) | "Speckit extension implementing the SCT methodology: a single source of truth (acceptance.yaml), auto-generated write-once tests, three-way spec↔code↔test consistency checks, test-effectiveness verification, and change-impact / tier-gated workflows." | `catalog-entry.json` `description` |
+| Author | `zqianqian137` | `extension.yml` `extension.author` |
+| Repository URL | `https://github.com/zqianqian137/spec-kit-sct` | `extension.yml` |
+| Download URL | `https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.1.0.zip` | `catalog-entry.json` `download_url` |
+| License | `MIT` | `extension.yml` |
+| Homepage (optional) | `https://github.com/zqianqian137/spec-kit-sct` | `extension.yml` |
+| Documentation (optional) | `https://github.com/zqianqian137/spec-kit-sct/blob/v1.1.0/README.md` | `catalog-entry.json` |
+| Changelog (optional) | `https://github.com/zqianqian137/spec-kit-sct/blob/v1.1.0/CHANGELOG.md` | `catalog-entry.json` |
+| Required Spec Kit Version | `>=0.9.0` | `extension.yml` `requires.speckit_version` |
+| Required Tools (optional) | `codebase-memory-mcp`（可选，用于 sct.impact 反向追溯增强） | `extension.yml` `requires.tools` |
+| Number of Commands | `6` | `catalog-entry.json` `provides.commands` |
 
-社区 **扩展** 与 **preset** 提交方式不同：
+> 版本号需与当前 GitHub release tag 一致。发布流程：
+> `git tag vX.Y.Z` → push → GitHub 生成 `vX.Y.Z.zip` 归档 → 更新本文件与
+> `catalog-entry.json` 的 `download_url` / `documentation` / `changelog`。
 
-- **扩展走 Issue 模板**，不要直接开 PR 改 `extensions/catalog.community.json`。
-- 打开 Issue 模板：
-  https://github.com/github/spec-kit/issues/new?template=extension_submission.yml
-- 维护者审核通过后，会把条目写进 `extensions/catalog.community.json` 并更新
-  `docs/community/extensions.md` 表格。
+## 2. category / effect（社区目录展示用，v1.1.0 起已声明）
 
-## 二、发布前本地准备（已指向 zqianqian137/spec-kit-sct）
+- `category: process` —— 跨阶段编排工作流（spec → code → test → check → verify）
+- `effect: read-write` —— 生成测试文件 / 覆盖率报告 / 验证报告等产物
 
-```bash
-cd spec-kit-sct
-git init && git add -A && git commit -m "SCT extension v1.0.0"
-git branch -M main
-git remote add origin https://github.com/zqianqian137/spec-kit-sct.git
-git tag v1.0.0
-git push -u origin main --tags     # 也需在 GitHub 上创建 Release（tag v1.0.0）
-```
+声明位置：`extension.yml` `extension:` 块 + `catalog-entry.json` 顶层
+（两者需一致，官方目录页从 catalog 读这两个字段展示）。
 
-Release 归档地址（即 `download_url`，已写入各文件）：
+## 3. 提交前自检
 
-```text
-https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.0.zip
-```
+- [ ] `extension.yml` 与 `catalog-entry.json` 的 version 一致
+- [ ] `catalog-entry.json` 含 `category` / `effect` / `provides.commands`(6)
+- [ ] Download URL 指向已存在的 GitHub tag 归档（v1.1.0.zip 已发布）
+- [ ] `extension.yml` 的 `schema_version: "1.0"`，命令文件位于 `commands/`
+- [ ] 6 个命令文件均可被加载（`specify extension info` 可列出）
+- [ ] README 有安装命令 `specify extension add sct --from <v1.1.0.zip>`
+- [ ] LICENSE 存在（MIT）
 
-> 🔐 **认证说明（重要）**：GitHub 自 2021-08-13 起已**停止支持账号密码**
-> 进行 Git over HTTPS 操作，推送必须用 **Personal Access Token (PAT)**。
-> 邮箱 + 密码 `qian191996` 作为账号密码**无法用于 `git push`**，会被拒绝
-> （`remote: Support for password authentication was removed`）。
-> 请用以下任一方式：
-> 1. 生成 PAT（`repo` 权限）：GitHub → Settings → Developer settings →
->    Personal access tokens → Tokens (classic) → Generate new token，勾选 `repo`。
-> 2. 推送时用 PAT 代替密码：
->    `git push https://1737306921%40qq.com:<YOUR_PAT>@github.com/zqianqian137/spec-kit-sct.git --tags`
->    （邮箱中的 `@` 需转义为 `%40`。）
-> 3. 或配置 SSH key 后改用 `git@github.com:zqianqian137/spec-kit-sct.git`。
+## 4. 提交动作（二选一）
 
-本地自测（可选但建议）：
+**A. Issue 提交（推荐，官方模板引导）**
+1. 打开 https://github.com/github/spec-kit/issues/new?template=extension_submission.yml
+2. 按第 1 节对照表逐项填写
+3. 提交后等待维护者 triage（labels: enhancement, needs-triage）
+4. 通过后维护者把条目并入 `extensions/catalog.community.json`，
+   社区目录页自动展示
 
-```bash
-specify extension add --dev /path/to/spec-kit-sct
-specify extension info sct
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.0.zip
-```
+**B. PR 直改 catalog**
+1. fork github/spec-kit
+2. 编辑 `extensions/catalog.community.json`，在 `extensions` 下新增键 `sct`，
+   值 = 本仓库 `catalog-entry.json` 的完整内容
+3. 提交 PR
 
-## 三、Issue 提交内容（填入 extension_submission 模板）
+> 注意：目录条目里的 `verified / downloads / stars / created_at / updated_at`
+> 由维护者/站点工具填充，提交时无需提供。
 
-```text
-## Extension Submission
+## 5. 唯一性说明（为什么值得收录）
 
-Extension ID:        sct
-Extension Name:      Spec-Code-Test Consistency (SCT)
-Version:             1.0.0
-Author:              zqianqian137
-License:             MIT
-Repository:          https://github.com/zqianqian137/spec-kit-sct
-Download URL:        https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.0.zip
-Documentation:       https://github.com/zqianqian137/spec-kit-sct/blob/v1.0.0/README.md
-Required Spec Kit:   >=0.9.0
-Tool dependencies:   codebase-memory-mcp (optional, required: false)
-Commands provided:   5  (speckit.sct.merge / codegen / check / impact / e2e)
-Hooks provided:      0  (NON-INTRUSIVE — no lifecycle hooks; the 5 commands run manually after implementation)
-Companion preset:    sct  (speckit.specify / plan / implement / constitution — hint-only overrides, never auto-runs SCT)
-Tags:                sct, spec-code-test, consistency, test-automation, change-impact
-
-Description:
-  Speckit extension implementing the SCT methodology: a single source of truth
-  (acceptance.yaml), auto-generated write-once tests, three-way spec<->code<->test
-  consistency checks, and change-impact / tier-gated workflows.
-
-Key features:
-  - Single source of truth (acceptance.yaml) built from spec/plan/data-model/api-contracts
-  - Write-once derived unit + e2e tests (no manual edits)
-  - Three-way consistency check with human-review report (JaCoCo incremental coverage,
-    API execution, rule verification, change-point audit)
-  - Reverse change-impact tracing (P0/P1/P2) + L1/L2/L3 tier decision
-  - Playwright e2e auto-regression bridge
-  - Optional --ai LLM extraction / semantic drift; optional codebase-memory-mcp enrichment
-  - Brownfield incremental mode, CodeGraph request enrichment, full exception-value coverage
-
-Testing confirmation:
-  Tested locally with `specify extension add --dev` and `specify extension add --from <archive>`.
-```
-
-## 四、catalog 条目（供维护者直接写入 extensions/catalog.community.json）
-
-见同目录 `catalog-entry.json`（已按社区扩展 catalog schema 写齐，可直接粘贴）。
-
-## 五、提交前 Checklist
-
-- [ ] `extension.yml` 的 `repository` / `homepage` 已改为真实仓库地址
-- [ ] 已创建 GitHub Release `v1.0.0`（tag 已 push）
-- [ ] `README.md` 含有效的 `specify extension add ... --from <download_url>` 命令
-- [ ] `LICENSE` 文件存在（MIT）
-- [ ] `CHANGELOG.md` 已填写
-- [ ] `catalog-entry.json` 的 `download_url` / `documentation` 与真实 Release 一致
-- [ ] 本地 `specify extension add --dev` 安装验证通过
-- [ ] 5 个命令文件 + 脚本 + 模板均随仓库发布（已包含在本次包中）
-- [ ] 配套 preset (`presets/sct/`) 已随扩展一起发布
-
-## 六、目录结构（本发布包）
-
-```text
-spec-kit-sct/
-├── extension.yml              # 扩展清单（已按社区 schema 修正）
-├── README.md                  # 本扩展文档（含安装命令）
-├── LICENSE                    # MIT
-├── CHANGELOG.md
-├── catalog-entry.json         # 社区目录条目（提交用）
-├── SCT-COMMUNITY-SUBMISSION.md # 本文件
-├── commands/                  # 5 个 speckit.sct.* 命令
-├── scripts/                   # Python 引擎（merge/codegen/check/impact/e2e）
-├── templates/                 # 产物模板（SoT / 报告 / e2e / 单元测试约定等）
-└── presets/sct/               # 配套 preset：4 个核心命令覆盖
-    ├── preset.yml
-    └── commands/
-```
-
-## 七、与 presets 页的关系（澄清）
-
-`extensions/sct/` 的核心能力在**脚本引擎**里，而社区 **presets** 只能携带
-`templates/` 和 `commands/` 覆盖，无法携带脚本引擎。因此 SCT 作为**扩展**
-提交到社区扩展目录（本包）才是完整形态。
-
-本仓库同时内嵌了一个配套 preset (`presets/sct/`)，仅含 4 个核心命令覆盖
-`speckit.specify/plan/implement/constitution`。**它只是可选的方法论提示
-（hint-only）**：覆盖项只追加 SCT 提示，绝不自动运行任何 SCT 命令、也绝不改动
-原始流程，适合只想在核心命令里看到 SCT 提醒、不需要完整引擎的项目。安装方式见
-`README.md`。
+社区 163+ 扩展中，SCT 同时具备：
+- **完整前向保证链**（merge→codegen→check→impact→e2e→verify 六命令贯通）
+- **确定性脚本优先**（从 SoT 机械派生断言，不靠 LLM 判断"实现是否符合规范"）
+- **测试有效性验证**（sct.verify：幻影检测/编译门/真实执行数/变异得分，诚实三态）
+- **独有能力**：非 HTTP 接口、多模块、AI 测试平台 intent 导出、断言不反推代码、
+  8 类漂移归因

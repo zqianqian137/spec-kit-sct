@@ -17,7 +17,7 @@ check: confirm the forward chain holds (3-way consistency + execution + coverage
 
 ## What it provides
 
-5 commands — non-intrusive (zero hooks, original flow untouched):
+6 commands — non-intrusive (zero hooks, original flow untouched):
 
 | Command | Purpose | Key artifact |
 |---------|---------|--------------|
@@ -26,13 +26,14 @@ check: confirm the forward chain holds (3-way consistency + execution + coverage
 | `speckit.sct.check` | Three-way consistency check spec ↔ code ↔ test + human-review report | `test-report.md` |
 | `speckit.sct.impact` | Reverse-trace code changes → affected scenarios (P0/P1/P2) + L1/L2/L3 tier | `change-impact.md` |
 | `speckit.sct.e2e` | Bridge impact + SoT into Playwright auto-regression | `e2e/auto_generated/*` |
+| `speckit.sct.verify` | Test-effectiveness gate: phantom tasks, real compile, real executed tests, mutation score (PASS/BLOCK/UNPROVEN) | `verification.md` |
 
 **Non-intrusive by design.** SCT registers **no lifecycle hooks** and never
-alters the original `specify / plan / implement / constitution` flow. The 5
+alters the original `specify / plan / implement / constitution` flow. The 6
 commands above are invoked **manually by the user**, after implementation — the
 user decides, per change, whether and when to run `merge` / `codegen` / `check`
-/ `impact` / `e2e`. The companion preset (below) only appends optional
-methodology hints; it never auto-runs an SCT command either.
+/ `impact` / `e2e` / `verify`. The companion preset (below) only appends
+optional methodology hints; it never auto-runs an SCT command either.
 
 ## Installation
 
@@ -41,7 +42,7 @@ methodology hints; it never auto-runs an SCT command either.
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.6.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.1.0.zip
 ```
 
 Or install from a local checkout during development:
@@ -59,7 +60,7 @@ preset. Its overrides only append **optional methodology hints** (keep an
 auto-run an SCT command and never alter the original flow:
 
 ```bash
-specify preset add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.6.zip
+specify preset add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.1.0.zip
 ```
 
 The preset lives in `presets/sct/` and requires the `sct` extension (or can be
@@ -78,7 +79,7 @@ used standalone for terminology-only projects).
 
 - You only need light terminology/template overrides — a **preset** is simpler.
 - You expect SCT to auto-run inside your `plan`/`implement` flow — it does not;
-  the 5 commands are manual by design, so you must invoke them yourself after
+  the 6 commands are manual by design, so you must invoke them yourself after
   implementation.
 
 ## Quick start
@@ -97,6 +98,10 @@ specify sct.check --spec specs/001/acceptance.yaml --code backend/src/main/java 
 # 4. Reverse-trace a change and (optionally) generate e2e regression
 specify sct.impact
 specify sct.e2e
+
+# 5. L2/L3: verify the tests actually catch bugs (honest three-state gate)
+specify sct.verify --spec specs/001/acceptance.yaml --code backend/src/main/java \
+  --tasks specs/001/tasks.md --surefire backend/target/surefire-reports
 ```
 
 The `--ai` flag on `merge` and `check` requires `SILICONFLOW_API_KEY`
