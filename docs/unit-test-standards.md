@@ -19,7 +19,12 @@
 
 > 注：SCT `acceptance-codegen.py` 的 `--junit auto` 会跟随项目已有版本生成 4/5，二者**不混用**。
 >
-> ⚠️ **JDK 8 兼容性**：当前 codegen 在 Act 段会写 `var actual = service.x(...)`（Java 10+ 语法），**JDK 8 项目编译失败**。两种走法：(a) 等 SCT 加 `--java-target 8` 参数后用之；(b) 在生成后用 `sed -i 's/\bvar actual\b/<实际类型> actual/' tests/generated/*.java` 做一次性替换（要先知道返回类型）。该问题已在待办清单，等用户拍板。
+> ✅ **JDK 8 兼容性（v1.0.5 起已修复）**：codegen 不再生成 `var`（Java 10+ 语法），
+> Act 段统一用 `Object actual = service.x(...)`；集合输入用
+> `java.util.Arrays.asList(...)` / `java.util.Collections.emptyList()` / `emptyMap()`，
+> 规避 Java 9+ 的 `List.of` / `Map.of`；集合形参（`List<...>` 等）会自动补
+> `import java.util.*`。**JDK 8 项目生成的测试可直接编译**（`javac --release 8` 验证通过）。
+> 若新项目确需 JDK 21 新特性（`var`、`List.of`），在生成后按需改写并在 review 中注明即可。
 
 ## 2. 命名规范
 
@@ -39,16 +44,19 @@
 @DisplayName("...")               // 意图注解
 void methodName_ShouldX_WhenY() {
     // 1. Arrange — 输入与 Mock 桩
-    var input = new OrderRequest(...);
+    OrderRequest input = new OrderRequest(...);   // JDK 8 无 var，一律显式类型
     when(collaborator.findById(1L)).thenReturn(...);
 
     // 2. Act — 调用被测方法
-    var actual = service.process(input);
+    Object actual = service.process(input);       // 与 codegen 输出一致（Object 兜底）
 
     // 3. Assert — 断言
     assertThat(actual).isEqualTo(expected);
 }
 ```
+
+> **JDK 8 禁止 `var`**（Java 10+ 语法），一律显式声明类型；SCT 生成的 Act 段使用
+> `Object actual` 保证任意返回类型可编译。
 
 **禁止**："一行流"（Arrange/Act/Assert 全挤在一行）、重复 Act-Assert 模式、Setup 测试方法里放业务断言。
 

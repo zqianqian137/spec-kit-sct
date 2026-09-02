@@ -41,7 +41,7 @@ methodology hints; it never auto-runs an SCT command either.
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.4.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.5.zip
 ```
 
 Or install from a local checkout during development:
@@ -59,7 +59,7 @@ preset. Its overrides only append **optional methodology hints** (keep an
 auto-run an SCT command and never alter the original flow:
 
 ```bash
-specify preset add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.4.zip
+specify preset add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.0.5.zip
 ```
 
 The preset lives in `presets/sct/` and requires the `sct` extension (or can be
@@ -150,7 +150,7 @@ void testCalculateDiscountPrice_WithVip3_ShouldReturn85() throws Exception {
     int vipLevel = 3;
     double expectedResult = 85.0;            // 预期结果来自 SoT
     // 2. Act (执行)
-    var actual = service.calculateDiscountPrice(originalPrice, vipLevel);
+    Object actual = service.calculateDiscountPrice(originalPrice, vipLevel);  // JDK8 兼容：不写 var(Java10+)
     // 3. Assert (断言)
     assertEquals(expectedResult, actual, "BR-001: ... 返回值与预期不符");
 }

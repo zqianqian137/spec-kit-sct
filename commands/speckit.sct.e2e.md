@@ -80,6 +80,23 @@ Outputs (all under `e2e/auto_generated/`):
 Fixture path convention: generated specs live in `e2e/auto_generated/`, so they resolve
 fixtures as `../fixtures/<file_ref>` — keep test data in `e2e/fixtures/`.
 
+## Step 3.1 — Two consumer paths (SCT e2e is a *generator*, not an executor)
+
+The bridge only **writes** artifacts; it never runs a browser. Who consumes them depends
+on the environment — pick the path your setup supports:
+
+| Path | Consumer | Precondition | How it runs |
+|---|---|---|---|
+| **A — Playwright 直接回归** | `*.spec.js` + `E2E_TESTCASES.md` | 该环境已装 Playwright 与浏览器（`npx playwright install`） | `npx playwright test e2e/auto_generated/`，人工对照 `E2E_TESTCASES.md` 勾选结果 |
+| **B — AI 测试平台** | `_intent_tests.json` | 内网已部署 AI 测试平台（AI 脚本生成/调度） | 平台导入 intent 文件生成并执行用例；**本机无需装 Playwright** |
+
+- **内网没装 Playwright ≠ 不能走 e2e 桥**：路径 B 依然成立——本机只负责生成，
+  Playwright 依赖完全落在 AI 测试平台侧。
+- 同一个 `_intent_tests.json` 是路径 B 的**唯一数据契约**：G/W/T 意图 + 关联脚本名
+  （模板见 `templates/intent-test-template.json`），平台据此重建可执行用例。
+- 路径 A 的产物（`.spec.js`）在路径 B 下是**参考物而非执行物**——平台以自己的
+  引擎跑，不用本地 spec 文件。
+
 ## Step 4 — Human review, then run
 
 **Generated ≠ runnable.** Review the specs before trusting them: selectors

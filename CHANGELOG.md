@@ -3,6 +3,23 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.0.5] - 2026-09-02
+
+### Fixed — 生成代码全面 JDK 8 兼容（内网主流 JDK 8 可直接编译）
+- Act 段不再写 `var actual = ...`（Java 10+ 语法），统一 `Object actual = ...`，
+  任意返回类型均可编译（已用 `javac --release 8` 验证）
+- 集合输入不再用 `List.of` / `Map.of`（Java 9+ API），改用
+  `java.util.Arrays.asList(...)` / `java.util.Collections.emptyList()` / `emptyMap()`
+- 集合形参（`List<...>`、`Map<...>` 等 java.util 常见类型）自动补 `import java.util.*`，
+  修复"形参用了 `List` 却没 import"导致的编译失败
+- 同步更新：`unit-test-standards.md` 移除"等 --java-target 8"的待办说明，
+  README 示例改为 `Object actual`
+
+### Added — `sct.e2e` 两个消费路径说明
+- 命令文件新增 Step 3.1：路径 A（Playwright 直接回归，需本机装 Playwright）vs
+  路径 B（AI 测试平台消费 `_intent_tests.json`，本机无需装 Playwright）
+- 明确 SCT e2e 是"生成器不是执行器"：内网没装 Playwright 不影响走 e2e 桥
+
 ## [1.0.4] - 2026-09-01
 
 ### Added — `sct.codegen` 独立开关 + `sct.check` 接口层预检

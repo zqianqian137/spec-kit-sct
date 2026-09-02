@@ -717,12 +717,13 @@ def _java_value_typed(value, type_: str) -> str:
     """按声明类型把 SoT 值转 Java 字面量；复杂对象无字面量时给 null 并标记"""
     t = (type_ or "").strip().split("<")[0].strip()
     if t in ("List","Set","Collection","java.util.List","java.util.Set","java.util.Collection"):
+        # JDK8 兼容：List.of/Map.of 是 Java9+ API，改用 Arrays.asList / Collections.emptyXxx
         if isinstance(value, (list, tuple)):
             elems = ", ".join(_java_value(v) for v in value)
-            return f"java.util.List.of({elems})" if elems else "java.util.List.of()"
-        return "java.util.List.of()"
+            return f"java.util.Arrays.asList({elems})" if elems else "java.util.Collections.emptyList()"
+        return "java.util.Collections.emptyList()"
     if t in ("Map","java.util.Map"):
-        return "java.util.Map.of()"
+        return "java.util.Collections.emptyMap()"
     if t in ("boolean","Boolean"):
         return "true" if value else "false"
     if t in ("int","long","short","byte","Integer","Long","Short","Byte"):
@@ -920,6 +921,17 @@ def _render_java_test_class(rules: list, junit_version: str, class_info: dict = 
     for m in mocks:
         if "." in m and m != cls_full:
             imports.append(f"import {m};")
+    # 形参类型若是 java.util 常见集合的简单名（如 List<Integer>），补 import 否则编译失败；
+    # FQN 类型（java.util.List<...>）原样可编译，无需 import
+    JUTIL_SIMPLE = {"List", "Set", "Map", "Collection", "ArrayList", "LinkedList",
+                    "HashMap", "HashSet", "Queue", "Deque", "Iterator", "Optional"}
+    for _, pm in params_cache.items():
+        if not pm:
+            continue
+        for p in pm:
+            top = (p.get("type") or "").split("<")[0].strip().rstrip("[]")
+            if top in JUTIL_SIMPLE:
+                imports.append(f"import java.util.{top};")
     imports = sorted(set(imports))
 
     # mock 字段
@@ -1078,7 +1090,7 @@ def _render_java_test_class(rules: list, junit_version: str, class_info: dict = 
                         "        // ==========================\n"
                         "        // 2. Act (执行)\n"
                         "        // ==========================\n"
-                        f"        var actual = {call};\n"
+                        f"        Object actual = {call};  // JDK8 兼容：不写 var(Java10+)\n"
                         "        // ==========================\n"
                         "        // 3. Assert (断言)\n"
                         "        // ==========================\n"
