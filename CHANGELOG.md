@@ -3,6 +3,47 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.0.6] - 2026-09-02
+
+### Fixed — 移植 ai-test-platform 实战（sct-improvements.md F-1~F-20）全部问题
+
+**命名冲突（阻塞级，同 feature 多 API/多规则不再互相覆盖）**
+- F-2：API 测试文件名 `split('-')[1]` → `[-1]`，`API-F003-001~006` 生成
+  `test_api_001.py`~`test_api_006.py`，不再全部落成 `test_api_f003.py`
+- F-5：规则测试方法名 `split("-")[1]` → `[-1]`，`test_br_001/002/003` 不再重名
+  （pytest 只跑最后一个同名函数的 bug 消除）
+- 连带修复：consistency-check 的 API/规则匹配口径同步为**按 ID 末段**匹配
+  （`API-F003-001` ↔ `test_api_001.py`；`BR-F003-001` ↔ `test_br_001`），
+  API/规则覆盖率不再虚高或归零
+
+**数据正确性**
+- F-3：`render_api_test` 兼容两种 response schema——
+  新规范 `response_200.fields` + `error_codes: [400,...]`、旧规范
+  `response.success/errors`，成功/异常用例都能生成；报告计数同步
+- F-7：COVERAGE_REPORT 场景覆盖列改为**扫描实际生成的测试函数数**
+  （`scan_generated_scenario_funcs`），不再用 `len(scenarios)` 自欺欺人
+- F-8：规则覆盖列用与生成代码一致的函数名（`test_br_{末段}`），报告与代码对得上
+- F-1：spec-merge 识别 Speckit 编号 G/W/T 列表（`1. **Given**` 形式），
+  编号 Given 自动分隔新场景；兼容器 bullet 与加粗续行
+
+**e2e bridge 扩展（F-13/F-14/F-15/F-16）**
+- F-13：action 支持 `upload_file | click | double_click | double_click_node |
+  fill | navigate | batch_confirm_nodes`（其他 type 仍 TODO 占位）
+- F-14：assertion 支持 `ui_message | ui_visible | url_contains`
+- F-15：`--include-p2` 参数，无 impact 文件时可选包含 P2 场景（默认仍 P0/P1）
+- F-16：`pre_steps` inline flow 含 `?`（如 `[login, navigate:/x?y=1]`）自动拆
+  block 序列解析，解析失败给出 block 写法提示
+
+**多模块 + 非 HTTP（F-17/F-18/F-19/F-20，W4 新功能移植）**
+- F-17：consistency-check 支持 `--module`（默认 `{code}/{module}/src/main/java`）
+  与 `--module-src`（源码不在 src/main/java 时覆盖）
+- F-18：consistency-check `--non-http` 扫描 `@RabbitListener/@KafkaListener/@Scheduled`
+  与 SoT `non_http_interfaces` 比对，缺适配器报 `MISSING_NON_HTTP_IMPL`（HIGH）
+- F-19：codegen 支持 `--module`（输出隔离到 `{out}/{module}/`）与 `--non-http`
+  （生成 `test_non_http_*.py` 测试桩）
+- F-20：`templates/acceptance-template.yaml` 新增 `non_http_interfaces` 段示例
+  （RABBIT_LISTENER / KAFKA_LISTENER / SCHEDULED）
+
 ## [1.0.5] - 2026-09-02
 
 ### Fixed — 生成代码全面 JDK 8 兼容（内网主流 JDK 8 可直接编译）

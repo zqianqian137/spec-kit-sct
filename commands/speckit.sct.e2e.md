@@ -33,23 +33,29 @@ Only scenarios that carry an **`e2e:` block** are bridged. A scenario without on
 simply not automatable by this bridge — it is not an error, but it must be reported
 (see Step 3).
 
-`e2e` block schema (W1 scope):
+`e2e` block schema (v1.0.6 支持类型):
 
 ```yaml
 acceptance_scenarios:
   - id: F001-1
     e2e:
       priority: P0                          # P0 / P1 / P2
-      pre_steps: [login, navigate:/batch/import]
+      pre_steps: [login, navigate:/batch/import]   # inline flow 含 '?' 也能解析（v1.0.6）
       action:
-        type: upload_file                   # W1 only: upload_file
+        type: upload_file                   # 支持：upload_file | click | double_click |
+                                            #       double_click_node | fill | navigate |
+                                            #       batch_confirm_nodes（其他 type → TODO）
         file_ref: fixtures/tasks.csv        # → resolved to e2e/fixtures/tasks.csv
         method: file_input                  # file_input (default) | drag_drop
       assertion:
-        type: ui_message                    # W1 only: ui_message
+        type: ui_message                    # 支持：ui_message | ui_visible | url_contains
         text: "导入成功"
         timeout: 5000
 ```
+
+- 默认只桥接 **P0/P1**；需要含 P2 场景时加 `--include-p2`（v1.0.6 起）。
+- `pre_steps` 的 inline flow（`[login, navigate:/x?y=1]`）若含 `?`，脚本会自动拆成
+  block 序列再解析；仍失败时会给出明确的 block 写法提示。
 
 ## Step 2 — Check e2e coverage before generating
 

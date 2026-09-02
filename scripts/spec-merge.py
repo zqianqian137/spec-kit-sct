@@ -104,19 +104,42 @@ def extract_features_from_spec(spec_text: str) -> list:
                 "then": "",
                 "_raw": sc_text,  # 暂存原始文本，AI 模式用
             }
-        elif stripped.startswith("- ") and current_feature:
-            content = stripped[2:].strip()
-            if current_scenario is None:
-                # 顶层 bullet → 需求
+        elif current_feature and (stripped.startswith("- ") or re.match(r"^\d+[.、)]\s+", stripped)
+                                  or stripped.startswith("**")):
+            # F-1 修复：同时识别三种 G/W/T 写法——
+            #   1) bullet:    "- Given ..."
+            #   2) 编号列表:  "1. **Given** ..."（Speckit 风格；第二、三行常无编号）
+            #   3) 加粗开头:  "**Given** ..."（编号列表的续行）
+            numbered = bool(re.match(r"^\d+[.、)]\s+", stripped))
+            content = stripped
+            if re.match(r"^\d+[.、)]\s+", content):
+                content = re.sub(r"^\d+[.、)]\s+", "", content).strip()
+            elif content.startswith("- "):
+                content = content[2:].strip()
+            # 去 ** ** 加粗（"**Given** 文本" / "**Given**：文本"）
+            bm = re.match(r"\*\*(\w+)\*\*\s*[:：]?\s*(.*)$", content, re.S)
+            kw, rest = None, content
+            if bm:
+                kw, rest = bm.group(1).lower(), bm.group(2).strip()
+            elif content.lower().startswith(("given ", "when ", "then ")):
+                kw = content.split(None, 1)[0].lower()
+                rest = content.split(None, 1)[1].strip()
+            if kw in ("given", "when", "then"):
+                if current_scenario is None:
+                    # 编号列表前没有 H3 场景标题 → 自动开一个匿名场景
+                    current_scenario = {"given": "", "when": "", "then": "",
+                                        "_raw": f"（编号列表场景）{rest}"}
+                elif kw == "given" and numbered and current_scenario.get("given"):
+                    # 新编号 Given = 新场景：先归档当前场景再开新场景（F-1）
+                    current_feature["acceptance_scenarios"].append(current_scenario)
+                    current_scenario = {"given": "", "when": "", "then": "",
+                                        "_raw": f"（编号列表场景）{rest}"}
+                current_scenario[kw] = rest.rstrip(":：")
+            elif current_scenario is None:
+                # 顶层列表项（非 G/W/T）→ 需求
                 current_feature["requirements"].append(content)
-            elif content.lower().startswith("given "):
-                current_scenario["given"] = content[6:].rstrip(":：")
-            elif content.lower().startswith("when "):
-                current_scenario["when"] = content[5:].rstrip(":：")
-            elif content.lower().startswith("then "):
-                current_scenario["then"] = content[5:].rstrip(":：")
             else:
-                # 兜底：塞 when
+                # 场景内的其他列表项：兜底塞 when，再塞 then
                 if not current_scenario["when"]:
                     current_scenario["when"] = content
                 elif not current_scenario["then"]:

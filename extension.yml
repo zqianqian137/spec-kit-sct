@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: sct
   name: "Spec-Code-Test Consistency (SCT)"
-  version: "1.0.5"
+  version: "1.0.6"
   description: "Speckit extension implementing the SCT methodology: a single source of truth (acceptance.yaml), auto-generated write-once tests, three-way spec↔code↔test consistency checks, and change-impact / tier-gated workflows."
   author: zqianqian137
   repository: https://github.com/zqianqian137/spec-kit-sct

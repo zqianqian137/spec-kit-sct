@@ -118,28 +118,83 @@ def extract_code_apis(code_root: Path, scope_filter: str = "all") -> Set[str]:
     return apis
 
 
+def extract_non_http_annotations(code_root: Path) -> Set[str]:
+    """F-18：扫描非 HTTP 接口适配器注解，返回 {TYPE:destination} 描述集合
+
+    支持：@RabbitListener(queues=...) / @KafkaListener(topics=...) / @Scheduled(...)
+    - RABBIT_LISTENER:队列名
+    - KAFKA_LISTENER:topic 名
+    - SCHEDULED:方法名（无显式 destination，约定用方法名）
+    """
+    found = set()
+    if not code_root.exists():
+        return found
+    for java_file in code_root.rglob("*.java"):
+        try:
+            content = java_file.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for m in re.finditer(r'@RabbitListener\([^)]*queues\s*=\s*["\']([^"\']+)["\']', content):
+            found.add(f"RABBIT_LISTENER:{m.group(1)}")
+        for m in re.finditer(r'@KafkaListener\([^)]*topics\s*=\s*["\']([^"\']+)["\']', content):
+            found.add(f"KAFKA_LISTENER:{m.group(1)}")
+        # @Scheduled 后的第一个方法名（跨行：注解在方法上一行）
+        for m in re.finditer(
+                r'@Scheduled\s*\([^)]*\)\s*\n?\s*(?:[\w<>\[\],\s.]+?)\s+(\w+)\s*\(', content):
+            found.add(f"SCHEDULED:{m.group(1)}")
+    return found
+
+
+def check_non_http_consistency(spec: dict, code_root: Path) -> List[dict]:
+    """F-18：SoT non_http_interfaces 段 vs 代码非 HTTP 适配器注解比对
+
+    SoT 每个非 HTTP 接口（type + destination）都应在代码中找到对应适配器；
+    找不到 → MISSING_NON_HTTP_IMPL（HIGH）。仅 --non-http 开启时检查。
+    """
+    issues = []
+    nhs = spec.get("non_http_interfaces", [])
+    if not nhs:
+        return issues
+    found = extract_non_http_annotations(code_root)
+    for nh in nhs:
+        nh_id = nh.get("id", "?")
+        nh_type = nh.get("type", "UNKNOWN")
+        dest = nh.get("destination", "")
+        key = f"{nh_type}:{dest}" if dest else nh_type
+        matched = key in found or (not dest and any(k.startswith(nh_type + ":") for k in found))
+        if not matched:
+            issues.append({
+                "type": "MISSING_NON_HTTP_IMPL",
+                "severity": "HIGH",
+                "message": (f"SoT 登记了非 HTTP 接口 {nh_id}（{nh_type}"
+                            f"{(':' + dest) if dest else ''}）但代码未找到对应适配器"
+                            f"（@RabbitListener/@KafkaListener/@Scheduled）"),
+            })
+    return issues
+
+
 def extract_test_coverage(test_root: Path) -> Dict[str, Set[str]]:
     """扫描测试文件，提取已覆盖的 API / 规则 / 场景，以及全部测试函数名"""
     coverage = {"apis": set(), "rules": set(), "scenarios": set(), "funcs": set()}
     if not test_root.exists():
         return coverage
     for test_file in test_root.rglob("test_*.py"):
-        # 从文件名提取：test_api_001.py -> API-001
-        m = re.search(r'test_api_(\d+)\.py', test_file.name)
+        # 从文件名提取（F-2 命名：test_api_001.py → 末段 001，与 SoT id API-F003-001 末段匹配）
+        m = re.search(r'test_api_([\w]+)\.py', test_file.name)
         if m:
-            coverage["apis"].add(f"API-{m.group(1)}")
+            coverage["apis"].add(m.group(1).lower())
         content = test_file.read_text(encoding="utf-8")
         funcs = re.findall(r'def (test_\w+)', content)
         for func in funcs:
             coverage["funcs"].add(f"{test_file.name}::{func}")
             if "br_" in func:
-                # test_br_001 -> br-001
-                rm = re.search(r'br_(\d+)', func)
+                # F-5 命名：test_br_001 → br-001（与 SoT BR-F003-001 末段匹配）
+                rm = re.search(r'br_(\w+)', func)
                 if rm:
                     coverage["rules"].add(f"br-{rm.group(1)}")
             sm = re.match(r'test_sc_f(\d+)_(\d+)', func)
             if sm:
-                # test_sc_f001_1 -> F001-1
+                # test_sc_f001_1 → F001-1
                 coverage["scenarios"].add(f"F{sm.group(1)}-{sm.group(2)}")
     return coverage
 
@@ -333,9 +388,13 @@ def check_consistency(spec: dict, code_apis: Set[str], test_cov: Dict[str, Set[s
                 "message": f"code 实现了 spec 未定义的接口: {m}",
             })
 
-    # 2. spec API vs test
-    spec_api_ids = {a["id"] for a in spec.get("apis", [])}
-    missing_in_test = spec_api_ids - test_cov["apis"]
+    # 2. spec API vs test（F-2 命名修复后按 ID 末段匹配：API-F003-001 ↔ test_api_001.py）
+    spec_api_suffix = {}
+    for a in spec.get("apis", []):
+        spec_api_suffix[a["id"].split("-")[-1].lower()] = a["id"]
+    test_api_suffixes = {s.lower() for s in test_cov["apis"]}
+    missing_in_test = [spec_api_suffix[s] for s in spec_api_suffix
+                       if s not in test_api_suffixes]
     for m in sorted(missing_in_test):
         issues.append({
             "type": "MISSING_TEST",
@@ -343,11 +402,12 @@ def check_consistency(spec: dict, code_apis: Set[str], test_cov: Dict[str, Set[s
             "message": f"spec 定义了 API 但 test 未覆盖: {m}",
         })
 
-    # 3. 业务规则覆盖
-    spec_rules = {r["id"].lower() for r in spec.get("rules", [])}
-    # test_cov["rules"] 是小写，直接对比
-    test_rules_normalized = {r.lower() for r in test_cov["rules"]}
-    missing_rules = spec_rules - test_rules_normalized
+    # 3. 业务规则覆盖（F-5 命名修复后按 ID 末段匹配：BR-F003-001 ↔ test_br_001）
+    spec_rules = {r["id"] for r in spec.get("rules", [])}
+    spec_rule_suffix = {r["id"].split("-")[-1].lower(): r["id"] for r in spec.get("rules", [])}
+    test_rule_suffixes = {x.split("-")[-1].lower() for x in test_cov["rules"]}
+    missing_rules = [spec_rule_suffix[s] for s in spec_rule_suffix
+                     if s not in test_rule_suffixes]
     for m in sorted(missing_rules):
         issues.append({
             "type": "MISSING_RULE_TEST",
@@ -356,8 +416,10 @@ def check_consistency(spec: dict, code_apis: Set[str], test_cov: Dict[str, Set[s
         })
 
     # 4. 覆盖率目标检查
-    api_cov = (len(test_cov["apis"]) / len(spec_api_ids) * 100) if spec_api_ids else 0
-    rule_cov = (len(spec_rules - missing_rules) / len(spec_rules) * 100) if spec_rules else 0
+    api_cov = (len(spec_api_suffix) - len(missing_in_test)) / len(spec_api_suffix) * 100 \
+        if spec_api_suffix else 0
+    rule_cov = (len(spec_rules - set(missing_rules)) / len(spec_rules) * 100) \
+        if spec_rules else 0
 
     return issues, {
         "api_coverage": api_cov,
@@ -781,10 +843,25 @@ def main():
                         help="跳过规则测试层（test_rules.py / Java 单测）；用于只关心 API 层的场景")
     parser.add_argument("--prereq-timeout", type=float, default=3.0,
                         help="API 测试预检 BASE_URL 可达性的超时（秒），默认 3")
+    parser.add_argument("--module", default="",
+                        help="F-17：微服务模块名；默认拼接 {code}/{module}/src/main/java 作为源码根"
+                             "（源码位置可用 --module-src 覆盖）")
+    parser.add_argument("--module-src", default="",
+                        help="F-17：模块内源码相对路径（默认 src/main/java；源码在 src/main/kotlin "
+                             "或自定义目录时用）")
+    parser.add_argument("--non-http", action="store_true",
+                        help="F-18：启用非 HTTP 接口适配器检查（扫描 @RabbitListener/"
+                             "@KafkaListener/@Scheduled 与 SoT non_http_interfaces 段比对）")
     args = parser.parse_args()
 
     spec = load_acceptance(Path(args.spec))
-    code_apis = extract_code_apis(Path(args.code), args.scope)
+    # F-17：--module 时源码根 = {code}/{module}/{module_src or 'src/main/java'}
+    if args.module:
+        code_root = (Path(args.code) / args.module
+                     / (args.module_src or "src/main/java"))
+    else:
+        code_root = Path(args.code)
+    code_apis = extract_code_apis(code_root, args.scope)
     test_cov = extract_test_coverage(Path(args.tests))
 
     # 接口测试预检：BASE_URL 可达性 + token 提示；缺前则退出 3，让 agent 让用户在对话框确认
@@ -806,6 +883,12 @@ def main():
             "severity": "MEDIUM",
             "message": f"测试案例缺失真相意图说明（[意图]/Given/When/Then）: {m}",
         })
+    # F-18：非 HTTP 接口适配器检查（--non-http 开启且 SoT 有 non_http_interfaces 段）
+    if args.non_http:
+        nh_issues = check_non_http_consistency(spec, code_root)
+        issues.extend(nh_issues)
+        if nh_issues:
+            print(f"⚠️  {len(nh_issues)} 个非 HTTP 接口未在代码中找到适配器（MISSING_NON_HTTP_IMPL）")
 
     # 可选数据源
     jacoco = parse_jacoco(Path(args.jacoco)) if args.jacoco and Path(args.jacoco).exists() else None
@@ -824,7 +907,7 @@ def main():
         print(f"CodeGraph: {'已接入（' + cg + '）' if cg else '未接入'}，"
               f"FIELD_DRIFT {n} 个，派生异常用例 {d} 个，系统级异常 {g} 个（将整合进测试报告）")
 
-    meta = {"spec": args.spec, "code": args.code, "tests": args.tests,
+    meta = {"spec": args.spec, "code": str(code_root), "tests": args.tests,
             "base": args.base if jacoco else "N/A", "jacoco": args.jacoco or "",
             "mode": mode, "codegen_meta": codegen_meta}
 

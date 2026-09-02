@@ -32,6 +32,7 @@ W1 限制：
 """
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -65,17 +66,38 @@ test.describe('{feature_id} - {feature_name}', () => {{
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description='change-impact → Playwright e2e bridge (W1 demo)')
+    p = argparse.ArgumentParser(description='change-impact → Playwright e2e bridge')
     p.add_argument('--spec', required=True, help='acceptance.yaml 路径')
     p.add_argument('--impact', help='change-impact.md 路径（可选）')
     p.add_argument('--out', required=True, help='spec.js 输出目录')
     p.add_argument('--dry-run', action='store_true', help='只打印不写文件')
+    p.add_argument('--include-p2', action='store_true',
+                   help='F-15 修复：无 impact 文件时也包含 P2 场景（默认只跑 P0/P1）')
     return p.parse_args()
 
 
 def load_spec(path: str) -> dict:
-    with open(path, 'r', encoding='utf-8') as f:
-        return yaml.safe_load(f)
+    raw = Path(path).read_text(encoding='utf-8')
+    # F-16 修复：pre_steps 若写成 inline flow 且含 '?'（如 [login, navigate:/x?y=1]），
+    # PyYAML 会把 '?' 当 complex-key 指示符而解析失败。预处理把单行
+    # 'pre_steps: [a, b]' 拆成 block 序列（缩进跟随原行）再交给 safe_load。
+    raw = re.sub(
+        r'(^[ \t]*)(pre_steps\s*:\s*)\[(.*?)\]',
+        lambda m: m.group(1) + m.group(2) + '\n' + '\n'.join(
+            f"{m.group(1)}  - {x.strip()}" for x in m.group(3).split(',') if x.strip()),
+        raw,
+        flags=re.M | re.S,
+    )
+    try:
+        return yaml.safe_load(raw)
+    except Exception as e:
+        raise SystemExit(
+            f"YAML 解析失败: {e}\n"
+            f"提示: 若 pre_steps 用了含 '?' 的 inline flow（如 [login, navigate:/x?y=1]），"
+            f"请改用 block 序列：\n"
+            f"      pre_steps:\n"
+            f"        - login\n"
+            f"        - navigate:/x?y=1\n")
 
 
 def collect_scenarios(spec: dict) -> list:
@@ -93,13 +115,14 @@ def collect_scenarios(spec: dict) -> list:
     return out
 
 
-def filter_by_impact(scenarios: list, impact_path: str | None) -> list:
-    """根据 change-impact.md 过滤（无则全跑 P0/P1）"""
+def filter_by_impact(scenarios: list, impact_path: str | None, include_p2: bool = False) -> list:
+    """根据 change-impact.md 过滤（无 impact 时：默认 P0/P1，--include-p2 时含 P2）"""
     if not impact_path or not Path(impact_path).exists():
-        # 无 impact：全跑 P0/P1
-        return [s for s in scenarios if s['e2e'].get('priority') in ('P0', 'P1')]
+        # 无 impact：F-15 修复，--include-p2 时含 P2，否则 P0/P1
+        return [s for s in scenarios
+                if s['e2e'].get('priority') in ('P0', 'P1', 'P2' if include_p2 else '')]
 
-    # 解析 change-impact.md（只认 P0/P1 行；优先级可能加粗或不加粗，统一去 * 归一化）
+    # 解析 change-impact.md（F-15：识别 P0/P1/P2 行；优先级可能加粗或不加粗，统一去 * 归一化）
     impacted_ids = set()
     for line in Path(impact_path).read_text(encoding='utf-8').splitlines():
         if '|' not in line:
@@ -108,7 +131,7 @@ def filter_by_impact(scenarios: list, impact_path: str | None) -> list:
         # 形如 | **P0** | F001-1 | ... | （与 consistency-check.parse_impact_priorities 口径一致）
         if len(cols) >= 3:
             pri = cols[1].strip().strip('*').strip()
-            if pri in ('P0', 'P1'):
+            if pri in ('P0', 'P1', 'P2' if include_p2 else ''):
                 impacted_ids.add(cols[2])
 
     return [s for s in scenarios if s['id'] in impacted_ids]
@@ -129,34 +152,85 @@ def render_pre_steps(pre_steps: list) -> str:
 
 
 def render_action(action: dict, fixture: dict | None) -> str:
-    """W1 demo：仅 upload_file"""
-    if action.get('type') != 'upload_file':
-        return f"    // TODO: action.type={action.get('type')} 暂未实现"
+    """action → Playwright 代码
 
-    file_ref = action.get('file_ref', '')
-    # 规范化：去除可能的 "fixtures/" 前缀（SoT 允许两种写法）
-    file_ref = file_ref.removeprefix('fixtures/')
-    method = action.get('method', 'file_input')
-
-    # 取 fixture 目录（约定：fixtures 在 e2e/fixtures/ 下，spec.js 在 e2e/auto_generated/）
-    # 用 __dirname 计算相对路径
-    if method == 'drag_drop':
-        return f"""    const filePath = path.join(__dirname, '..', 'fixtures', '{file_ref}');
+    F-13 修复：不止 upload_file，支持常见 UI 动作：
+      - upload_file           文件上传（file_input / drag_drop）
+      - click / double_click  点击（target 支持 css 选择器或文本）
+      - fill                  输入框填值
+      - navigate              页面跳转
+      - batch_confirm_nodes   批量确认（循环点击确认按钮直到不可点）
+    """
+    atype = action.get('type', '')
+    if atype == 'upload_file':
+        file_ref = action.get('file_ref', '')
+        # 规范化：去除可能的 "fixtures/" 前缀（SoT 允许两种写法）
+        file_ref = file_ref.removeprefix('fixtures/')
+        method = action.get('method', 'file_input')
+        # 取 fixture 目录（约定：fixtures 在 e2e/fixtures/ 下，spec.js 在 e2e/auto_generated/）
+        if method == 'drag_drop':
+            return f"""    const filePath = path.join(__dirname, '..', 'fixtures', '{file_ref}');
     const dropZone = page.locator('.dropzone, [data-testid="upload-area"]').first();
     await dropZone.setInputFiles(filePath);  // Playwright dropzone 兜底写法"""
-    else:  # file_input
         return f"""    const filePath = path.join(__dirname, '..', 'fixtures', '{file_ref}');
     const fileInput = page.locator('input[type="file"]').first();
     await fileInput.setInputFiles(filePath);"""
-def render_assertion(assertion: dict) -> str:
-    """W1 demo：仅 ui_message"""
-    if assertion.get('type') != 'ui_message':
-        return f"    // TODO: assertion.type={assertion.get('type')} 暂未实现"
+    if atype in ('click', 'double_click', 'double_click_node'):
+        target = action.get('target', action.get('selector', ''))
+        if not target:
+            return f"    // TODO: action.type={atype} 缺少 target/selector"
+        if target.startswith(('text=', 'css=', 'xpath=', 'role=')):
+            loc = f"page.locator('{target}')"
+        else:
+            loc = f"page.getByText('{target}').first()"
+        meth = 'dblclick' if atype in ('double_click', 'double_click_node') else 'click'
+        return f"    await {loc}.{meth}();"
+    if atype == 'fill':
+        target = action.get('target', action.get('selector', ''))
+        value = action.get('value', action.get('text', ''))
+        if not target:
+            return f"    // TODO: action.type=fill 缺少 target/selector"
+        loc = (f"page.locator('{target}')" if target.startswith(('css=', 'xpath=', 'role='))
+               else f"page.getByPlaceholder('{target}').first()")
+        return f"    await {loc}.fill('{value}');"
+    if atype == 'navigate':
+        return f"    await page.goto('{action.get('url', '')}');"
+    if atype == 'batch_confirm_nodes':
+        btn = action.get('confirm_selector', action.get('target', 'text=确认'))
+        return f"""    // 批量确认：循环点击"确认"直到不再出现
+    let confirmBtn = page.locator('{btn}').first();
+    while (await confirmBtn.count()) {{
+      await confirmBtn.click();
+      await page.waitForTimeout(200);
+      confirmBtn = page.locator('{btn}').first();
+    }}"""
+    return f"    // TODO: action.type={atype} 暂未实现"
 
-    text = assertion.get('text', '')
+
+def render_assertion(assertion: dict) -> str:
+    """assertion → Playwright 断言代码
+
+    F-14 修复：不止 ui_message，支持常见断言类型：
+      - ui_message  页面出现指定文本
+      - ui_visible  选择器对应元素可见
+      - url_contains 当前 URL 包含指定片段
+    """
+    atype = assertion.get('type', '')
     timeout = assertion.get('timeout', 5000)
-    return f"""    await expect(page.getByText('{text}').first())
+    if atype == 'ui_message':
+        text = assertion.get('text', '')
+        return f"""    await expect(page.getByText('{text}').first())
       .toBeVisible({{ timeout: {timeout} }});"""
+    if atype == 'ui_visible':
+        sel = assertion.get('selector', assertion.get('target', ''))
+        if not sel:
+            return "    // TODO: assertion.type=ui_visible 缺少 selector"
+        return f"""    await expect(page.locator('{sel}').first())
+      .toBeVisible({{ timeout: {timeout} }});"""
+    if atype == 'url_contains':
+        frag = assertion.get('fragment', assertion.get('text', ''))
+        return f"""    await expect(page).toHaveURL(new RegExp('{frag}'));"""
+    return f"    // TODO: assertion.type={atype} 暂未实现"
 
 
 def render_scenario(scenario: dict, source_spec: str) -> str:
@@ -194,18 +268,32 @@ def humanize_pre_steps(pre_steps: list) -> list:
 
 
 def humanize_action(action: dict) -> str:
-    """action → 人类可读操作"""
-    if action.get('type') == 'upload_file':
+    """action → 人类可读操作（F-13 扩展）"""
+    atype = action.get('type')
+    if atype == 'upload_file':
         file_ref = action.get('file_ref', '（未指定文件）')
         return f"在文件上传控件选择 `{file_ref}` 并提交"
-    return f"执行操作 {action.get('type', 'unknown')}"
+    if atype in ('click', 'double_click'):
+        return f"{'双击' if atype == 'double_click' else '点击'}元素 `{action.get('target', '')}`"
+    if atype == 'fill':
+        return f"在 `{action.get('target', '')}` 输入 `{action.get('value', '')}`"
+    if atype == 'navigate':
+        return f"打开页面 `{action.get('url', '')}`"
+    if atype == 'batch_confirm_nodes':
+        return f"批量确认节点（循环点击 `{action.get('confirm_selector', '确认')}`）"
+    return f"执行操作 {atype or 'unknown'}"
 
 
 def humanize_assertion(assertion: dict) -> str:
-    """assertion → 人类可读预期"""
-    if assertion.get('type') == 'ui_message':
+    """assertion → 人类可读预期（F-14 扩展）"""
+    atype = assertion.get('type')
+    if atype == 'ui_message':
         return f"页面出现提示文本「{assertion.get('text', '')}」"
-    return f"验证 {assertion.get('type', 'unknown')}"
+    if atype == 'ui_visible':
+        return f"元素 `{assertion.get('selector', '')}` 可见"
+    if atype == 'url_contains':
+        return f"URL 包含 `{assertion.get('fragment', '')}`"
+    return f"验证 {atype or 'unknown'}"
 
 
 def gen_testcases_doc(scenarios: list, source_spec: str, impact_ref: str | None) -> str:
@@ -324,7 +412,7 @@ def main():
 
     spec = load_spec(args.spec)
     all_scenarios = collect_scenarios(spec)
-    target_scenarios = filter_by_impact(all_scenarios, args.impact)
+    target_scenarios = filter_by_impact(all_scenarios, args.impact, args.include_p2)
 
     if not target_scenarios:
         print(f"⚠️  无可生成场景（spec 共 {len(all_scenarios)} 个含 e2e 段的 scenario，过滤后 0 个）",

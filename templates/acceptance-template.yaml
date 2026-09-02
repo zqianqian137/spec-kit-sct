@@ -88,6 +88,10 @@ apis:
           description: CSV 内容（Base64）
           example: "eCwxLDIK"          # 有真实样本就填；留空则降级为启发式
     response:
+      # F-3 兼容两种 schema：
+      #   新规范: response_200.fields + error_codes: [400, 404, ...]
+      #   旧规范: response.success + response.errors（下方示例）
+      # 两种都识别，任选其一；混用不影响生成。
       success:                          # 正常路径（生成 test_api_001_success）
         status: 200
         body:
@@ -103,3 +107,17 @@ rules:
     text: 单次导入不超过 1000 条用例
     derived_from: "specs/001-xxx/spec.md#数据约束"  # 规则来源锚点
     priority: P0                        # P0=必须满足 / P1=重要 / P2=一般
+
+# ====== 非 HTTP 接口（可选，F-20 增强：消息队列/定时任务/批处理） ======
+# 仅当项目含非 HTTP 契约时填写；codegen --non-http 生成测试桩，
+# consistency-check --non-http 与代码适配器注解（@RabbitListener/@KafkaListener/@Scheduled）比对。
+non_http_interfaces:
+  - id: MQ-001
+    name: 批量导入结果处理
+    type: RABBIT_LISTENER              # RABBIT_LISTENER / KAFKA_LISTENER / SCHEDULED
+    destination: batch-import-result-queue  # 队列名/topic/方法名（SCHEDULED 用方法名）
+    handler_class: BatchImportResultListener
+    trigger: 消息到达队列时触发
+    contract:
+      input: BatchImportResult
+      output: void

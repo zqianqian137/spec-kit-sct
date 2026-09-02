@@ -337,14 +337,17 @@ def gen_api_tests(apis: list, out_dir: Path, graph_index: dict = None,
             "service": (graph or {}).get("service", ""),
         }
         test_code = render_api_test(api, graph, base_url, global_exceptions)
-        file_name = f"test_api_{api['id'].split('-')[1].lower()}.py"
+        # F-2 修复：取 ID 最后一节（API-001→001；API-F003-001→001），
+        # 避免同 feature 多 API 因 split('-')[1] 取到相同中段而互相覆盖
+        api_suffix = api["id"].split("-")[-1].lower()
+        file_name = f"test_api_{api_suffix}.py"
         file_path = out_dir / file_name
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(test_code, encoding="utf-8")
         generated.append(str(file_path))
         # 派生异常用例数（文件内 test_*_cg_error_* 函数）
         annotations[api["id"]]["derived_error_cases"] = \
-            len(derive_error_cases(api, graph, api["id"].split("-")[1].lower()))
+            len(derive_error_cases(api, graph, api_suffix))
     return generated, field_drifts, annotations
 
 
@@ -368,6 +371,34 @@ def required_fields(api: dict, graph: dict | None = None) -> str:
     order = [f["name"] for f in body]
     ordered = [n for n in order if n in names] + sorted(names - set(order))
     return "、".join(ordered) if ordered else "无 body 要求"
+
+
+def split_api_response_schema(api: dict) -> tuple:
+    """F-3 修复：兼容两种 response schema，返回 (success_status, error_cases)
+
+    - 新规范: response_200.fields / error_codes: [400, 404, ...]
+    - 旧规范: response.success / response.errors: [{status, condition, message}, ...]
+
+    返回 (None, []) 表示两种 schema 都未提供 → 不生成成功用例（与旧行为一致：
+    没有 response 定义时 success_cases 为空，测试文件只有注释头）。
+    """
+    api_id = api.get("id", "?")
+    if "response_200" in api:
+        status = (api.get("response_200") or {}).get("status", 200)
+        errs = []
+        for c in (api.get("error_codes") or []):
+            errs.append({"status": int(c), "condition": f"error_code_{c}",
+                         "message": "", "source": f"acceptance.yaml#apis[{api_id}].error_codes"})
+        return status, errs
+    resp = api.get("response")
+    if isinstance(resp, dict):
+        if "success" in resp:
+            status = resp["success"].get("status", 200)
+            errs = list(resp.get("errors") or [])
+            return status, errs
+        # 仅 fields 形式：默认 200 成功
+        return 200, list(resp.get("errors") or [])
+    return None, []
 
 
 def render_api_test(api: dict, graph: dict | None = None,
@@ -399,41 +430,45 @@ def render_api_test(api: dict, graph: dict | None = None,
     path = api["path"]
     spec_ref = api.get("spec_ref", "")
     req_fields = required_fields(api, graph)
-    api_num = api_id.split("-")[1].lower()
+    # F-2/F-3 修复：取 ID 最后一节；兼容两种 response schema
+    api_num = api_id.split("-")[-1].lower()
+    success_status, error_cases_raw = split_api_response_schema(api)
 
-    # 成功用例
+    # 成功用例（F-3：兼容 response.success / response_200 两种写法）
     success_cases = []
-    if "response" in api and "success" in api["response"]:
-        success = api["response"]["success"]
+    if success_status is not None:
         success_cases.append({
             "name": f"test_api_{api_num}_success",
             "intent": f"验证 {api_name} 接口的正常路径",
-            "source": f"acceptance.yaml#apis[{api_id}].response.success",
+            "source": ("acceptance.yaml#apis[{api_id}].response_200"
+                       if "response_200" in api
+                       else f"acceptance.yaml#apis[{api_id}].response.success"),
             "given": f"服务可用，且请求体包含全部必填字段（{req_fields}）",
             "when": f"{method} {path} 提交合法请求体",
-            "then": f"返回 {success.get('status', 200)}，响应结构与 success 定义一致",
+            "then": f"返回 {success_status}，响应结构与 success 定义一致",
             "request": build_request_example(api, graph),
-            "expected_status": success.get("status", 200),
+            "expected_status": success_status,
         })
 
-    # 异常用例（两类）
+    # 异常用例（两类；F-3：error_codes 列表或 response.errors 数组都识别）
     error_cases = []
-    if "response" in api and "errors" in api["response"]:
-        for i, err in enumerate(api["response"]["errors"]):
-            then_line = f"返回 {err.get('status', 400)}"
-            if err.get("message"):
-                then_line += f"，且 message 包含 \"{err['message']}\""
-            error_cases.append({
-                "name": f"test_api_{api_num}_error_{i+1}",
-                "intent": f"验证 {err.get('condition', '异常条件')} 时接口拒绝请求",
-                "source": f"acceptance.yaml#apis[{api_id}].response.errors[{i+1}]",
-                "given": f"服务可用，但请求体缺失必填字段（{req_fields}）",
-                "when": f"{method} {path} 提交非法请求体",
-                "then": then_line,
-                "request": build_error_request(api, err, graph),
-                "expected_status": err.get("status", 400),
-                "expected_message_contains": err.get("message", ""),
-            })
+    for i, err in enumerate(error_cases_raw):
+        then_line = f"返回 {err.get('status', 400)}"
+        if err.get("message"):
+            then_line += f"，且 message 包含 \"{err['message']}\""
+        error_cases.append({
+            "name": f"test_api_{api_num}_error_{i+1}",
+            "intent": f"验证 {err.get('condition', '异常条件')} 时接口拒绝请求",
+            "source": (f"acceptance.yaml#apis[{api_id}].error_codes"
+                       if "error_codes" in api
+                       else f"acceptance.yaml#apis[{api_id}].response.errors[{i+1}]"),
+            "given": f"服务可用，但请求体缺失必填字段（{req_fields}）",
+            "when": f"{method} {path} 提交非法请求体",
+            "then": then_line,
+            "request": build_error_request(api, err, graph),
+            "expected_status": err.get("status", 400),
+            "expected_message_contains": err.get("message", ""),
+        })
     # CodeGraph 派生异常用例（约束/枚举/类型 → 系统性异常值，真相来源 codegraph:DTO.field）
     error_cases.extend(derive_error_cases(api, graph, api_num))
 
@@ -1271,7 +1306,9 @@ def _gen_python_rule_fallbacks(rules: list, out_dir: Path,
         L.append("# 全部规则已在 Java 层（JUnit + Mockito）覆盖，本文件无测试。")
     else:
         for rule in rules:
-            rule_num = rule["id"].split("-")[1].lower()
+            # F-5 修复：取 ID 最后一节（BR-F003-001→001），避免同 feature 多规则
+            # 因 split('-')[1] 取到相同中段而生成重名函数（pytest 只跑最后一个）
+            rule_num = rule["id"].split("-")[-1].lower()
             rule_id = f"br_{rule_num}"
             rule_ref = rule["id"].upper()
             priority = rule.get("priority", "")
@@ -1383,13 +1420,78 @@ def {func_name}():
     return generated
 
 
+def gen_non_http_tests(non_http_interfaces: list, out_dir: Path) -> list:
+    """F-19/F-20：为 SoT non_http_interfaces 段生成 Python 测试桩
+    （消息队列/定时任务/批处理等非 HTTP 契约；执行需环境，先落意图与契约，真实断言交实现侧）"""
+    generated = []
+    if not non_http_interfaces:
+        return generated
+    for nh in non_http_interfaces:
+        nh_id = nh.get("id", "MQ-000")
+        suffix = nh_id.split("-")[-1].lower()
+        func_name = f"test_mq_{suffix}"
+        nh_type = nh.get("type", "UNKNOWN")
+        dest = nh.get("destination", "")
+        handler = nh.get("handler_class", "")
+        contract = nh.get("contract") or {}
+        trigger = nh.get("trigger", "")
+        body = f'''"""
+AUTO-GENERATED FROM acceptance.yaml - DO NOT EDIT
+模板约定: extensions/sct/templates/unit-test-template.py
+
+Non-HTTP Interface: {nh_id} {nh.get("name", "")}
+Type: {nh_type}
+Destination: {dest}
+Handler: {handler}
+"""
+import pytest
+
+
+def {func_name}():
+    """[意图] {trigger or f"{nh_type} 触发"}
+
+    真相来源: acceptance.yaml#non_http_interfaces[{nh_id}]
+
+    Given: {nh_type} 契约（input={contract.get("input", "unknown")}）就绪
+    When:  触发事件到达 {dest or "目标"}
+    Then:  handler {handler or "（未指定）"} 消费并产出 output={contract.get("output", "void")}
+    """
+    # TODO: 发送测试消息到 {dest or "目标"}，验证消费逻辑（需消息中间件/调度环境）
+    pytest.fail(
+        f"非 HTTP 接口 {nh_id}（{nh_type}）需消息中间件/调度环境方可执行；"
+        f"请按 acceptance.yaml#non_http_interfaces[{nh_id}] 契约实现消费验证。"
+    )
+'''
+        file_path = out_dir / f"test_non_http_{suffix}.py"
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(body, encoding="utf-8")
+        generated.append(str(file_path))
+    return generated
+
+
+def scan_generated_scenario_funcs(out_dir: Path) -> set:
+    """F-7 修复：扫描实际生成的 test_scenarios.py，返回已生成的场景测试函数名集合
+    （函数名小写、'-'→'_' 归一化，与 gen_scenario_tests 命名一致）"""
+    funcs = set()
+    for f in out_dir.rglob("test_scenarios*.py"):
+        try:
+            text = f.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for m in re.finditer(r"def (test_sc_\w+)", text):
+            funcs.add(m.group(1))
+    return funcs
+
+
 def gen_coverage_report(acceptance: dict, out_dir: Path, field_drifts: list = None,
                         codegraph_ref: str = "", global_exceptions: list = None,
-                        api_annotations: dict = None, binding_drifts: list = None) -> str:
+                        api_annotations: dict = None, binding_drifts: list = None,
+                        non_http_interfaces: list = None) -> str:
     """生成覆盖率报告：spec → test 映射表（结构对齐 templates/coverage-report-template.md）"""
     apis = acceptance.get("apis", [])
     rules = acceptance.get("rules", [])
     features = acceptance.get("features", [])
+    non_http_interfaces = non_http_interfaces or acceptance.get("non_http_interfaces", [])
     spec_ref = acceptance.get("_meta", {}).get("source_spec", "")
 
     report = f"""# Spec-Test Coverage Report
@@ -1405,13 +1507,14 @@ def gen_coverage_report(acceptance: dict, out_dir: Path, field_drifts: list = No
 |--------|--------|------|------|----------|--------|--------------|
 """
     for api in apis:
-        api_num = api["id"].split("-")[1].lower()
+        # F-2/F-3 修复：报告命名与 gen_api_tests 完全一致（取 [-1]）；用例数兼容两种 schema
+        api_num = api["id"].split("-")[-1].lower()
         file_name = f"test_api_{api_num}.py"
         case_count = 0
-        resp = api.get("response", {})
-        if "success" in resp:
+        s_status, s_errs = split_api_response_schema(api)
+        if s_status is not None:
             case_count += 1
-        case_count += len(resp.get("errors", []))
+        case_count += len(s_errs)
         derived = (api_annotations or {}).get(api["id"], {}).get("derived_error_cases", 0)
         case_count += derived
         report += (f"| {api['id']} | {api['name']} | {api['method']} | `{api['path']}` "
@@ -1425,7 +1528,9 @@ def gen_coverage_report(acceptance: dict, out_dir: Path, field_drifts: list = No
 |---------|------|--------|------|
 """
     for rule in rules:
-        report += f"| {rule['id']} | {rule['text']} | {rule.get('priority', '-')} | test_rules.py::test_{rule['id'].lower().replace('-', '_')} |\n"
+        # F-8 修复：与 gen_rule_tests 的命名完全一致（取 [-1]），报告与代码对得上
+        rule_suffix = rule["id"].split("-")[-1].lower()
+        report += f"| {rule['id']} | {rule['text']} | {rule.get('priority', '-')} | test_rules.py::test_br_{rule_suffix} |\n"
 
     report += f"""
 
@@ -1436,11 +1541,18 @@ def gen_coverage_report(acceptance: dict, out_dir: Path, field_drifts: list = No
 """
     for feat in features:
         scenarios = feat.get("acceptance_scenarios", [])
+        # F-7 修复：已覆盖数 = 实际生成文件中存在的场景测试函数数（不再是场景数本身）
+        gen_funcs = scan_generated_scenario_funcs(out_dir)
+        covered_in_feat = sum(
+            1 for sc in scenarios
+            if "test_sc_" + sc.get("id", "?").lower().replace("-", "_") in gen_funcs
+        )
         sc_refs = ", ".join(
             f"{sc.get('id', '?')} (test_sc_{sc.get('id', '?').lower().replace('-', '_')})"
             for sc in scenarios
         )
-        report += f"| {feat.get('id', '?')} {feat.get('name', '')} | {len(scenarios)} | {len(scenarios)} | {sc_refs} |\n"
+        report += (f"| {feat.get('id', '?')} {feat.get('name', '')} | {len(scenarios)} "
+                   f"| {covered_in_feat} | {sc_refs} |\n")
 
     report += f"""
 
@@ -1449,10 +1561,25 @@ def gen_coverage_report(acceptance: dict, out_dir: Path, field_drifts: list = No
 - **API 接口**: {len(apis)}/{len(apis)}（目标 100%）
 - **业务规则**: {len(rules)}/{len(rules)}（目标 100%）
 - **验收场景**: {sum(len(f.get('acceptance_scenarios', [])) for f in features)} 个（每个场景的 given/when/then 已写入 test_scenarios.py docstring）
+- **非 HTTP 接口**: {len(non_http_interfaces)}/{len(non_http_interfaces)}（目标 100%，v1.0.6 起，见下节）
 """
 
-    # 异常值覆盖（回答：是否拿到该系统的全部异常值）
-    sot_err_total = sum(len(a.get("response", {}).get("errors", [])) for a in apis)
+    # F-19/F-20：非 HTTP 接口覆盖（SoT non_http_interfaces 段 → test_non_http_*.py）
+    if non_http_interfaces:
+        report += f"""
+## 非 HTTP 接口覆盖
+
+| Interface ID | 名称 | 类型 | 目标 | 测试 |
+|--------------|------|------|------|------|
+"""
+        for nh in non_http_interfaces:
+            nh_id = nh.get("id", "?")
+            suffix = nh_id.split("-")[-1].lower()
+            report += (f"| {nh_id} | {nh.get('name', '')} | {nh.get('type', '')} "
+                       f"| `{nh.get('destination', '')}` | test_non_http_{suffix}.py::test_mq_{suffix} |\n")
+
+    # 异常值覆盖（回答：是否拿到该系统的全部异常值）；F-3：兼容两种 schema
+    sot_err_total = sum(len(split_api_response_schema(a)[1]) for a in apis)
     derived_total = sum((api_annotations or {}).get(a["id"], {}).get("derived_error_cases", 0)
                         for a in apis)
     report += f"""
@@ -1552,10 +1679,17 @@ def main():
                              "codegraph.project.base_url > 默认 http://localhost:8080）。"
                              "实际生效值由生成的 conftest.py 在 pytest 启动时读取环境变量 BASE_URL，"
                              "此处仅作为 conftest.py 的默认值")
+    parser.add_argument("--module", default="",
+                        help="F-19 增强：微服务模块名；指定后生成到 {out}/{module}/ 子目录隔离"
+                             "（多模块项目按模块出产物，避免互相覆盖）")
+    parser.add_argument("--non-http", action="store_true",
+                        help="F-19 增强：为 SoT non_http_interfaces 段生成非 HTTP 接口测试桩"
+                             "（消息队列/定时任务/批处理等，Python test_non_http_*.py）")
     args = parser.parse_args()
 
     spec_path = Path(args.spec)
-    out_dir = Path(args.out)
+    # F-19 增强：--module 时输出隔离到 {out}/{module}/ 子目录
+    out_dir = (Path(args.out) / args.module) if args.module else Path(args.out)
     meta_path = out_dir / "_codegen_meta.json"
 
     print(f"Loading acceptance spec: {spec_path}")
@@ -1604,6 +1738,7 @@ def main():
     apis = acceptance.get("apis", [])
     rules = acceptance.get("rules", [])
     features = acceptance.get("features", [])
+    non_http_interfaces = acceptance.get("non_http_interfaces", [])
 
     if args.only_rules:
         keep_rules = {x.strip() for x in args.only_rules.split(",") if x.strip()}
@@ -1708,14 +1843,26 @@ def main():
     for f in scenario_files:
         print(f"  + {f}")
 
+    non_http_files = []
+    if args.non_http and non_http_interfaces:
+        print("Generating non-HTTP interface tests (F-19)...")
+        non_http_files = gen_non_http_tests(non_http_interfaces, out_dir)
+        for f in non_http_files:
+            print(f"  + {f}")
+    else:
+        print("⏭️  未生成非 HTTP 测试（--non-http 未传，或 SoT 无 non_http_interfaces 段）")
+
     print("Generating coverage report...")
     report = gen_coverage_report(acceptance, out_dir, field_drifts, args.codegraph or "",
-                                 global_exceptions, api_annotations, binding_drifts)
+                                 global_exceptions, api_annotations, binding_drifts,
+                                 non_http_interfaces)
     print(f"  + {report}")
 
-    print(f"\nDone. Generated {len(api_files) + len(rule_files) + len(scenario_files)} test files.")
+    print(f"\nDone. Generated {len(api_files) + len(rule_files) + len(scenario_files) + len(non_http_files)} test files.")
     print(f"API coverage: {len(api_files)}/{len(apis)}")
     print(f"Rule coverage: {len(rules)}/{len(rules)}")
+    if non_http_files:
+        print(f"Non-HTTP coverage: {len(non_http_files)}/{len(non_http_interfaces)}")
     print("Next: implement code to pass these tests.")
 
 
