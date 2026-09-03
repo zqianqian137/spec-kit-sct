@@ -3,6 +3,30 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.4.0] - 2026-09-03
+
+### Added — 测试计划 hook 自动触发（`after_plan`）
+
+- `extension.yml` 新增 `hooks.after_plan` → `speckit.testing.plan`（`optional: true`）：
+  `specify plan` 完成后自动提示生成测试计划草稿，用户可跳过；生成后始终可人工补充调整。
+  这是 SCT 唯一的生命周期集成点，其余命令仍手动、非侵入
+
+### Added — `testing.run` 报告扩展为统一详尽的测试报告
+
+- 报告新增 **「测试报告产物索引」**（报告开头）：串起本次测试流全部产物——
+  本报告 / 测试计划 / 变更影响分析 / 覆盖映射 / 功能测试案例 / Playwright 脚本 / 场景未实现清单
+- 报告新增 **「6.4 缺陷汇总」**：整合执行失败（junit FAIL/ERROR）+ 漂移（HIGH/MEDIUM）+
+  未实现，统一成带「缺陷单」列的缺陷清单供人工跟进
+- 报告标题更新为「一致性 × 覆盖率 × 执行情况 × 缺陷 × 变更影响」
+
+### Changed — 功能测试案例结构化字段补全（`E2E_TESTCASES.md`）
+
+- 案例字段对齐测试行业标准，新增/重命名：
+  **案例编号 / 案例类型（正例·反例）/ 案例优先级 / 案例意图 / 前置条件 / 测试步骤 / 预期结果**
+- 新增 `case_type` 判断：SoT `e2e.case_type` 显式指定优先，否则启发式（then 文本含
+  「拒绝/失败/报错/错误/异常/不允许/无权限…」→ 反例，否则正例）
+- 执行汇总表新增「案例类型」列
+
 ## [1.3.0] - 2026-09-03
 
 ### Changed — 命令体系精简 6 → 3（`speckit.sct.*` → `speckit.testing.*`）

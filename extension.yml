@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: sct
   name: "Spec-Code-Test Consistency (SCT)"
-  version: "1.3.0"
+  version: "1.4.0"
   description: "Test-domain extension for Spec Kit: auto-generate a test plan from spec + plan artifacts, derive write-once tests across unit / interface (protocol-agnostic) / e2e (scenario cases), and gate every change on hard evidence (coverage ≥90%, cases 100% passing, no missing coverage) with a human-reviewable report."
   author: zqianqian137
   repository: https://github.com/zqianqian137/spec-kit-sct
@@ -38,10 +38,23 @@ provides:
       file: commands/speckit.testing.run.md
       description: "Execute derived tests, verify requirements are implemented, apply the hard gate (coverage ≥90%, cases 100% passing, no missing coverage) and write a human-reviewable report. Honest PASS/BLOCK/UNPROVEN; non-zero exit blocks the merge."
 
-  # NOTE: SCT is intentionally NON-INTRUSIVE. It provides the 3 `speckit.testing.*`
-  # commands only; it does NOT register any lifecycle hooks, so the original
-  # `specify / plan / tasks / implement` flow is never altered or auto-extended.
-  # The commands are invoked manually — the user decides, per change, when to run each.
+  # NOTE: SCT is intentionally NON-INTRUSIVE by default: it provides the 3
+  # `speckit.testing.*` commands, and the single `after_plan` hook below is the
+  # ONLY lifecycle integration — it auto-suggests generating the test plan right
+  # after `specify plan` (optional: the user can skip it, then enrich by hand).
+  # No other hook alters `specify / tasks / implement`.
+
+# ====== lifecycle hook: auto-suggest the test plan after planning ======
+# `after_plan` fires once the implementation plan exists. It surfaces
+# `speckit.testing.plan`, which auto-generates a test-plan draft from
+# spec.md + plan artifacts. `optional: true` means the user may skip it, and the
+# generated plan is always hand-enrichable afterward.
+hooks:
+  after_plan:
+    command: speckit.testing.plan
+    optional: true
+    prompt: "自动生成测试计划（acceptance.yaml）草稿？"
+    description: "从 spec + plan 产物自动生成测试计划草稿，人工可补充调整"
 
 tags:
   - "sct"

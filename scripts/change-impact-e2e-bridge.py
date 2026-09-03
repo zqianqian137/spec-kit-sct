@@ -296,6 +296,21 @@ def humanize_assertion(assertion: dict) -> str:
     return f"验证 {atype or 'unknown'}"
 
 
+def case_type_of(scenario: dict) -> str:
+    """判断案例类型：正例（正常路径）/ 反例（异常/边界/非法输入）。
+
+    优先级：SoT 显式 `case_type` > 启发式（then 文本含拒绝/失败/报错/异常/不允许/无权限 等词 → 反例）。
+    """
+    e2e = scenario.get('e2e', {})
+    explicit = e2e.get('case_type')
+    if explicit in ('positive', 'negative', '正例', '反例'):
+        return '正例' if explicit in ('positive', '正例') else '反例'
+    then = scenario.get('then', '') or ''
+    negative_hints = ('拒绝', '失败', '报错', '错误', '异常', '不允许', '禁止',
+                      '无权限', '无效', '超限', '不存在', '不可', '提示错误')
+    return '反例' if any(h in then for h in negative_hints) else '正例'
+
+
 def gen_testcases_doc(scenarios: list, source_spec: str, impact_ref: str | None) -> str:
     """生成人工测试案例文档（模板：templates/e2e-testcases-template.md）"""
     now = datetime.now().isoformat(timespec='seconds')
@@ -326,26 +341,27 @@ def gen_testcases_doc(scenarios: list, source_spec: str, impact_ref: str | None)
         L.append('')
         L.append('| 项目 | 内容 |')
         L.append('|------|------|')
-        L.append(f"| 用例 ID | {sid} |")
-        L.append(f"| 优先级 | **{pri}** |")
+        L.append(f"| 案例编号 | {sid} |")
+        L.append(f"| 案例类型 | **{case_type_of(sc)}**（正例=正常路径 / 反例=异常·边界·非法输入） |")
+        L.append(f"| 案例优先级 | **{pri}** |")
         L.append(f"| 所属模块 | {sc['feature_id']} {sc['feature_name']} |")
         L.append(f"| 对应自动化 | `{sid}.spec.js` |")
         L.append('')
-        L.append(f"**意图**：{sc.get('given', '')}时，{sc.get('when', '')}，应{sc.get('then', '')}")
+        L.append(f"**案例意图**：{sc.get('given', '')}时，{sc.get('when', '')}，应{sc.get('then', '')}")
         L.append('')
-        L.append('**Given（前置条件）**：')
+        L.append('**前置条件（Given）**：')
         L.append(f"- {sc.get('given', '')}")
         file_ref = e2e.get('action', {}).get('file_ref')
         if file_ref:
             L.append(f"- 准备测试数据 `e2e/fixtures/{file_ref.removeprefix('fixtures/')}`")
         L.append('')
-        L.append('**When（操作步骤）**：')
+        L.append('**测试步骤（When）**：')
         steps = humanize_pre_steps(e2e.get('pre_steps', []))
         steps.append(humanize_action(e2e.get('action', {})))
         for i, st in enumerate(steps, 1):
             L.append(f"{i}. {st}")
         L.append('')
-        L.append('**Then（预期结果）**：')
+        L.append('**预期结果（Then）**：')
         L.append(f"- {humanize_assertion(e2e.get('assertion', {}))}")
         L.append(f"- {sc.get('then', '')}")
         if file_ref:
@@ -360,10 +376,10 @@ def gen_testcases_doc(scenarios: list, source_spec: str, impact_ref: str | None)
     L.append('')
     L.append('## 执行汇总（测试人员回填）')
     L.append('')
-    L.append('| 用例 ID | 优先级 | 执行方式（人工/自动） | 结果 | 缺陷单 | 备注 |')
-    L.append('|---------|--------|----------------------|------|--------|------|')
+    L.append('| 案例编号 | 案例类型 | 优先级 | 执行方式（人工/自动） | 结果 | 缺陷单 | 备注 |')
+    L.append('|---------|---------|--------|----------------------|------|--------|------|')
     for sc in scenarios:
-        L.append(f"| {sc['id']} | {sc['e2e'].get('priority', 'P2')} | | | | |")
+        L.append(f"| {sc['id']} | {case_type_of(sc)} | {sc['e2e'].get('priority', 'P2')} | | | | |")
     L.append('')
     L.append('> 放行标准：P0 全部通过；P1 失败需记录缺陷并限期修复。')
     return '\n'.join(L)

@@ -125,15 +125,32 @@ in a given language.
 |---------|---------|--------------|
 | `speckit.testing.plan` | **Auto-generate the test plan** from `spec.md` + plan artifacts (`plan.md` / `data-model.md` / `api-contracts.md`); optional change-impact tiering (P0/P1/P2 + L1/L2/L3) | `acceptance.yaml`, `change-impact.md` |
 | `speckit.testing.cases` | **Derive write-once test cases** across three layers — unit (language-pluggable), interface (**protocol-agnostic**), e2e (**scenario cases only**) | `tests/generated/*`, `e2e/auto_generated/*` |
-| `speckit.testing.run` | **Execute + gate + report**: verify requirements are implemented, apply the hard gate (coverage ≥90%, 100% passing, no missing coverage), write a human-reviewable report | `test-report.md` |
+| `speckit.testing.run` | **Execute + gate + report**: verify requirements are implemented, apply the hard gate (coverage ≥90%, 100% passing, no missing coverage), write a unified report (unit + interface + coverage + defects + drift + change impact) | `test-report.md` |
 
-**Non-intrusive by design.** SCT registers **no lifecycle hooks** and never
-alters the original `specify / plan / tasks / implement` flow. The 3 commands
-above are invoked **manually by the user** — the user decides, per change,
+**Mostly non-intrusive, one opt-in hook.** SCT never alters the original
+`specify / plan / tasks / implement` flow. It registers **one** optional
+lifecycle hook — `after_plan` — which *suggests* auto-generating the test plan
+right after `specify plan` (you can skip it; the generated plan is always
+hand-enrichable). Everything else is **manual**: the user decides, per change,
 whether and when to run `plan` / `cases` / `run`.
 
 > Command naming: `speckit.testing.*` — the extension id stays `sct` (repo
 > identity), while the commands say what they are for.
+
+## The unified test report
+
+`testing.run` produces **one report** that ties the whole test flow together,
+for a human reviewer:
+
+| Section | What it shows |
+|---|---|
+| 产物索引 | pointers to every artifact: test plan, change-impact, coverage map, functional test cases, Playwright specs, scenario gaps |
+| 执行摘要 | the three-state gate verdict and its evidence |
+| 覆盖率 | overall + incremental JaCoCo coverage |
+| 单测 + 接口测试 | per-rule and per-API results, pass/fail/skip |
+| 缺陷汇总 | a defect list (execution failures + drifts + missing impls) with a defect-ticket column |
+| 变更影响分析 | P0/P1/P2 scenarios × execution results |
+| 漂移检测 | spec ↔ code ↔ test drift, field drift, system-level exceptions |
 
 ## Installation
 
@@ -142,7 +159,7 @@ whether and when to run `plan` / `cases` / `run`.
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.2.0.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.4.0.zip
 ```
 
 Or install from a local checkout during development:

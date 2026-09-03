@@ -39,7 +39,7 @@ import sct_ids
 from datetime import datetime
 
 # 生成器版本：写入 _codegen_meta.json，manifest 校验时若版本不符则强制再生成
-GENERATOR_VERSION = "1.2.0"
+GENERATOR_VERSION = "1.4.0"
 
 
 def sha256_file(path: Path) -> str:

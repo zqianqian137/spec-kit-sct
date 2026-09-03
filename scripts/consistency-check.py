@@ -599,7 +599,7 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
     cg_gx = cg_meta.get("global_exceptions") or []
     L: List[str] = []
 
-    L.append("# SCT 测试报告（一致性 × 覆盖率 × 执行情况）")
+    L.append("# SCT 测试报告（一致性 × 覆盖率 × 执行情况 × 缺陷 × 变更影响）")
     L.append("")
     L.append(f"**Generated**: {now}  ")
     L.append(f"**SoT**: `{meta.get('spec', '')}`  ")
@@ -622,6 +622,19 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
         L.append("**CodeGraph**: `未接入（示例值为 SoT 启发式，无字段级比对与异常值派生）`  ")
     L.append(f"**JaCoCo 报告**: `{meta.get('jacoco', '未提供（--jacoco）')}`  ")
     L.append("**Tool**: consistency-check.py")
+    L.append("")
+    # ---- 报告产物索引：本次测试流产出的全部报告，串起各维度供人工查阅 ----
+    L.append("**测试报告产物索引**：")
+    L.append("")
+    L.append("| 维度 | 产物 | 位置 |")
+    L.append("|------|------|------|")
+    L.append(f"| 本报告（单测+接口+覆盖率+缺陷+漂移） | test-report.md | `{meta.get('report', '') or '--report'}` |")
+    L.append(f"| 测试计划 | acceptance.yaml | `{meta.get('spec', '')}` |")
+    L.append(f"| 变更影响分析 | change-impact.md | `{meta.get('impact', '') or '（未提供 --impact）'}` |")
+    L.append(f"| 覆盖映射（spec→test） | COVERAGE_REPORT.md | `{meta.get('tests', '')}/COVERAGE_REPORT.md` |")
+    L.append(f"| 功能测试案例（正/反例） | E2E_TESTCASES.md | `e2e/auto_generated/E2E_TESTCASES.md` |")
+    L.append(f"| Playwright 脚本 | `*.spec.js` | `e2e/auto_generated/` |")
+    L.append(f"| 场景未实现清单（UNPROVEN） | _scenario_gaps.json | `{meta.get('tests', '')}/_scenario_gaps.json` |")
     L.append("")
 
     # ---- 摘要指标（结论部分再汇总）----
@@ -841,6 +854,33 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
         L.append("> 未接入 CodeGraph，无系统级异常信息。")
     L.append("")
 
+    # ===== 6.4 缺陷汇总（执行失败 + 漂移 + 未实现，统一成缺陷清单供人工跟进）=====
+    L.append("### 6.4 缺陷汇总")
+    L.append("")
+    defects: List[tuple] = []  # (缺陷类型, 关联对象, 说明)
+    if junit:
+        for n, s in junit.items():
+            if s in ("FAIL", "ERROR"):
+                defects.append(("执行失败", n, s))
+    for i in issues:
+        if i["severity"] == "HIGH":
+            defects.append(("漂移-HIGH", i.get("type", ""), i.get("message", "")))
+        elif i["severity"] == "MEDIUM":
+            defects.append(("漂移-MEDIUM", i.get("type", ""), i.get("message", "")))
+    if defects:
+        L.append(f"> 共 **{len(defects)}** 处缺陷/问题（执行失败 {sum(1 for d in defects if d[0]=='执行失败')} 处，"
+                 f"漂移 {sum(1 for d in defects if d[0].startswith('漂移'))} 处）。"
+                 f"每个缺陷应由人工确认并关联缺陷单。")
+        L.append("")
+        L.append("| # | 缺陷类型 | 关联对象 | 说明 | 缺陷单（人工填写） |")
+        L.append("|---|----------|----------|------|---------------------|")
+        for idx, (kind, obj, desc) in enumerate(defects, 1):
+            L.append(f"| {idx} | {kind} | {obj} | {desc} | |")
+        L.append("")
+    else:
+        L.append("> 未发现执行失败或漂移。")
+        L.append("")
+
     # ===== 7. 结论 =====
     L.append("## 7. 结论与放行")
     L.append("")
@@ -1029,7 +1069,8 @@ def main():
 
     meta = {"spec": args.spec, "code": str(code_root), "tests": args.tests,
             "base": args.base if jacoco else "N/A", "jacoco": args.jacoco or "",
-            "mode": mode, "codegen_meta": codegen_meta}
+            "mode": mode, "codegen_meta": codegen_meta,
+            "impact": args.impact or "", "report": args.report or ""}
 
     # 三态门禁评估（P0-2 修复：覆盖率与全部测试执行结果必须参与判定）
     gates = evaluate_gates(issues, junit, incr, stats["line_coverage_target"],
