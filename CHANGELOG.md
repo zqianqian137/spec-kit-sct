@@ -3,6 +3,21 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.5.0] - 2026-09-03
+
+### Removed — 代码减法：删掉两个"五目标之外"的功能（净删 214 行）
+
+按用户明确指令做减法，删除与五个核心目标（不漏测/需求实现/可审核报告/三层覆盖/硬门禁）
+无关的过度扩展：
+
+- **非 HTTP 适配器**（`gen_non_http_tests` + `check_non_http_consistency` + `extract_non_http_annotations`
+  + `MISSING_NON_HTTP_IMPL` 漂移类型 + `--non-http` 参数 + 模板 `non_http_interfaces` 段 + `sct_ids.non_http_test_filename`）
+  ——接口层保持"协议无关"的**文档定位**，但不再维护独立的非 HTTP 测试桩生成与扫描
+- **变异测试**（`check_mutation` 函数 + `--mutation`/`--mutation-score`/`--mutation-threshold`/`--skip-mutation`
+  参数 + `MUTATION` 检查项）——`sct.verify` 保留幻影检测/编译门/真实测试计数三态
+
+影响：已含 `non_http_interfaces` 段的 SoT 不再生成非 HTTP 桩（该段被忽略，不报错）。
+
 ## [1.4.0] - 2026-09-03
 
 ### Added — 测试计划 hook 自动触发（`after_plan`）

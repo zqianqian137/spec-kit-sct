@@ -39,7 +39,7 @@ import sct_ids
 from datetime import datetime
 
 # 生成器版本：写入 _codegen_meta.json，manifest 校验时若版本不符则强制再生成
-GENERATOR_VERSION = "1.4.0"
+GENERATOR_VERSION = "1.5.0"
 
 
 def sha256_file(path: Path) -> str:
@@ -1454,56 +1454,6 @@ def {func_name}():
     return generated
 
 
-def gen_non_http_tests(non_http_interfaces: list, out_dir: Path) -> list:
-    """F-19/F-20：为 SoT non_http_interfaces 段生成 Python 测试桩
-    （消息队列/定时任务/批处理等非 HTTP 契约；执行需环境，先落意图与契约，真实断言交实现侧）"""
-    generated = []
-    if not non_http_interfaces:
-        return generated
-    for nh in non_http_interfaces:
-        nh_id = nh.get("id", "MQ-000")
-        suffix = sct_ids.id_suffix(nh_id)
-        func_name = f"test_mq_{suffix}"
-        nh_type = nh.get("type", "UNKNOWN")
-        dest = nh.get("destination", "")
-        handler = nh.get("handler_class", "")
-        contract = nh.get("contract") or {}
-        trigger = nh.get("trigger", "")
-        body = f'''"""
-AUTO-GENERATED FROM acceptance.yaml - DO NOT EDIT
-模板约定: extensions/sct/templates/unit-test-template.py
-
-Non-HTTP Interface: {nh_id} {nh.get("name", "")}
-Type: {nh_type}
-Destination: {dest}
-Handler: {handler}
-"""
-import pytest
-
-
-def {func_name}():
-    """[意图] {trigger or f"{nh_type} 触发"}
-
-    真相来源: acceptance.yaml#non_http_interfaces[{nh_id}]
-
-    Given: {nh_type} 契约（input={contract.get("input", "unknown")}）就绪
-    When:  触发事件到达 {dest or "目标"}
-    Then:  handler {handler or "（未指定）"} 消费并产出 output={contract.get("output", "void")}
-    """
-    # TODO: 发送测试消息到 {dest or "目标"}，验证消费逻辑（需消息中间件/调度环境）
-    # 状态建模（v1.1.3）：环境未就绪 = UNPROVEN（skip），不是 BLOCK（fail）
-    pytest.skip(
-        f"UNPROVEN: 非 HTTP 接口 {nh_id}（{nh_type}）需消息中间件/调度环境方可执行；"
-        f"契约见 acceptance.yaml#non_http_interfaces[{nh_id}]"
-    )
-'''
-        file_path = out_dir / f"test_non_http_{suffix}.py"
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(body, encoding="utf-8")
-        generated.append(str(file_path))
-    return generated
-
-
 def scan_generated_scenario_funcs(out_dir: Path) -> set:
     """F-7 修复：扫描实际生成的 test_scenarios.py，返回已生成的场景测试函数名集合
     （函数名小写、'-'→'_' 归一化，与 gen_scenario_tests 命名一致）"""
@@ -1520,13 +1470,11 @@ def scan_generated_scenario_funcs(out_dir: Path) -> set:
 
 def gen_coverage_report(acceptance: dict, out_dir: Path, field_drifts: list = None,
                         codegraph_ref: str = "", global_exceptions: list = None,
-                        api_annotations: dict = None, binding_drifts: list = None,
-                        non_http_interfaces: list = None) -> str:
+                        api_annotations: dict = None, binding_drifts: list = None) -> str:
     """生成覆盖率报告：spec → test 映射表（结构对齐 templates/coverage-report-template.md）"""
     apis = acceptance.get("apis", [])
     rules = acceptance.get("rules", [])
     features = acceptance.get("features", [])
-    non_http_interfaces = non_http_interfaces or acceptance.get("non_http_interfaces", [])
     spec_ref = acceptance.get("_meta", {}).get("source_spec", "")
 
     report = f"""# Spec-Test Coverage Report
@@ -1596,22 +1544,7 @@ def gen_coverage_report(acceptance: dict, out_dir: Path, field_drifts: list = No
 - **API 接口**: {len(apis)}/{len(apis)}（目标 100%）
 - **业务规则**: {len(rules)}/{len(rules)}（目标 100%）
 - **验收场景**: {sum(len(f.get('acceptance_scenarios', [])) for f in features)} 个（每个场景的 given/when/then 已写入 test_scenarios.py docstring）
-- **非 HTTP 接口**: {len(non_http_interfaces)}/{len(non_http_interfaces)}（目标 100%，v1.0.6 起，见下节）
 """
-
-    # F-19/F-20：非 HTTP 接口覆盖（SoT non_http_interfaces 段 → test_non_http_*.py）
-    if non_http_interfaces:
-        report += f"""
-## 非 HTTP 接口覆盖
-
-| Interface ID | 名称 | 类型 | 目标 | 测试 |
-|--------------|------|------|------|------|
-"""
-        for nh in non_http_interfaces:
-            nh_id = nh.get("id", "?")
-            suffix = sct_ids.id_suffix(nh_id)
-            report += (f"| {nh_id} | {nh.get('name', '')} | {nh.get('type', '')} "
-                       f"| `{nh.get('destination', '')}` | test_non_http_{suffix}.py::test_mq_{suffix} |\n")
 
     # 异常值覆盖（回答：是否拿到该系统的全部异常值）；F-3：兼容两种 schema
     sot_err_total = sum(len(split_api_response_schema(a)[1]) for a in apis)
@@ -1717,9 +1650,6 @@ def main():
     parser.add_argument("--module", default="",
                         help="F-19 增强：微服务模块名；指定后生成到 {out}/{module}/ 子目录隔离"
                              "（多模块项目按模块出产物，避免互相覆盖）")
-    parser.add_argument("--non-http", action="store_true",
-                        help="F-19 增强：为 SoT non_http_interfaces 段生成非 HTTP 接口测试桩"
-                             "（消息队列/定时任务/批处理等，Python test_non_http_*.py）")
     args = parser.parse_args()
 
     spec_path = Path(args.spec)
@@ -1783,7 +1713,6 @@ def main():
     apis = acceptance.get("apis", [])
     rules = acceptance.get("rules", [])
     features = acceptance.get("features", [])
-    non_http_interfaces = acceptance.get("non_http_interfaces", [])
 
     if args.only_rules:
         keep_rules = {x.strip() for x in args.only_rules.split(",") if x.strip()}
@@ -1886,24 +1815,14 @@ def main():
     for f in scenario_files:
         print(f"  + {f}")
 
-    non_http_files = []
-    if args.non_http and non_http_interfaces:
-        print("Generating non-HTTP interface tests (F-19)...")
-        non_http_files = gen_non_http_tests(non_http_interfaces, out_dir)
-        for f in non_http_files:
-            print(f"  + {f}")
-    else:
-        print("⏭️  未生成非 HTTP 测试（--non-http 未传，或 SoT 无 non_http_interfaces 段）")
-
     print("Generating coverage report...")
     report = gen_coverage_report(acceptance, out_dir, field_drifts, args.codegraph or "",
-                                 global_exceptions, api_annotations, binding_drifts,
-                                 non_http_interfaces)
+                                 global_exceptions, api_annotations, binding_drifts)
     print(f"  + {report}")
 
     # ---- write-once manifest（P0-5 修复）：记录全部生成文件的 sha256，
     # check 侧据此验证"生成测试未被手改"；缓存命中也要求 manifest 完整匹配。
-    all_outputs = list(api_files) + list(rule_files) + list(scenario_files) + list(non_http_files)
+    all_outputs = list(api_files) + list(rule_files) + list(scenario_files)
     conftest = out_dir / "conftest.py"
     if conftest.exists():
         all_outputs.append(str(conftest))
@@ -1921,11 +1840,9 @@ def main():
                          encoding="utf-8")
     print(f"  + {meta_path}")
 
-    print(f"\nDone. Generated {len(api_files) + len(rule_files) + len(scenario_files) + len(non_http_files)} test files.")
+    print(f"\nDone. Generated {len(api_files) + len(rule_files) + len(scenario_files)} test files.")
     print(f"API coverage: {len(api_files)}/{len(apis)}")
     print(f"Rule coverage: {len(rules)}/{len(rules)}")
-    if non_http_files:
-        print(f"Non-HTTP coverage: {len(non_http_files)}/{len(non_http_interfaces)}")
     print("Next: implement code to pass these tests.")
 
 

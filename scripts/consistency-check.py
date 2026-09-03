@@ -119,61 +119,6 @@ def extract_code_apis(code_root: Path, scope_filter: str = "all") -> Set[str]:
     return apis
 
 
-def extract_non_http_annotations(code_root: Path) -> Set[str]:
-    """F-18：扫描非 HTTP 接口适配器注解，返回 {TYPE:destination} 描述集合
-
-    支持：@RabbitListener(queues=...) / @KafkaListener(topics=...) / @Scheduled(...)
-    - RABBIT_LISTENER:队列名
-    - KAFKA_LISTENER:topic 名
-    - SCHEDULED:方法名（无显式 destination，约定用方法名）
-    """
-    found = set()
-    if not code_root.exists():
-        return found
-    for java_file in code_root.rglob("*.java"):
-        try:
-            content = java_file.read_text(encoding="utf-8")
-        except Exception:
-            continue
-        for m in re.finditer(r'@RabbitListener\([^)]*queues\s*=\s*["\']([^"\']+)["\']', content):
-            found.add(f"RABBIT_LISTENER:{m.group(1)}")
-        for m in re.finditer(r'@KafkaListener\([^)]*topics\s*=\s*["\']([^"\']+)["\']', content):
-            found.add(f"KAFKA_LISTENER:{m.group(1)}")
-        # @Scheduled 后的第一个方法名（跨行：注解在方法上一行）
-        for m in re.finditer(
-                r'@Scheduled\s*\([^)]*\)\s*\n?\s*(?:[\w<>\[\],\s.]+?)\s+(\w+)\s*\(', content):
-            found.add(f"SCHEDULED:{m.group(1)}")
-    return found
-
-
-def check_non_http_consistency(spec: dict, code_root: Path) -> List[dict]:
-    """F-18：SoT non_http_interfaces 段 vs 代码非 HTTP 适配器注解比对
-
-    SoT 每个非 HTTP 接口（type + destination）都应在代码中找到对应适配器；
-    找不到 → MISSING_NON_HTTP_IMPL（HIGH）。仅 --non-http 开启时检查。
-    """
-    issues = []
-    nhs = spec.get("non_http_interfaces", [])
-    if not nhs:
-        return issues
-    found = extract_non_http_annotations(code_root)
-    for nh in nhs:
-        nh_id = nh.get("id", "?")
-        nh_type = nh.get("type", "UNKNOWN")
-        dest = nh.get("destination", "")
-        key = f"{nh_type}:{dest}" if dest else nh_type
-        matched = key in found or (not dest and any(k.startswith(nh_type + ":") for k in found))
-        if not matched:
-            issues.append({
-                "type": "MISSING_NON_HTTP_IMPL",
-                "severity": "HIGH",
-                "message": (f"SoT 登记了非 HTTP 接口 {nh_id}（{nh_type}"
-                            f"{(':' + dest) if dest else ''}）但代码未找到对应适配器"
-                            f"（@RabbitListener/@KafkaListener/@Scheduled）"),
-            })
-    return issues
-
-
 def extract_test_coverage(test_root: Path) -> Dict[str, Set[str]]:
     """扫描测试文件，提取已覆盖的 API / 规则 / 场景，以及全部测试函数名"""
     coverage = {"apis": set(), "rules": set(), "scenarios": set(), "funcs": set()}
@@ -333,7 +278,7 @@ def evaluate_gates(issues: List[dict], junit: Dict[str, str] | None,
 
     修复 P0-2：增量行覆盖率与全部生成测试的执行结果必须参与最终判定，
     不再只打印进报告。junit 统计覆盖 test_api_/test_rules/test_scenarios/
-    test_non_http_ 全部生成产物，不再只看 test_api_ 前缀。
+    全部生成产物，不再只看 test_api_ 前缀。
     """
     gates: List[dict] = []
 
@@ -1009,9 +954,6 @@ def main():
     parser.add_argument("--module-src", default="",
                         help="F-17：模块内源码相对路径（默认 src/main/java；源码在 src/main/kotlin "
                              "或自定义目录时用）")
-    parser.add_argument("--non-http", action="store_true",
-                        help="F-18：启用非 HTTP 接口适配器检查（扫描 @RabbitListener/"
-                             "@KafkaListener/@Scheduled 与 SoT non_http_interfaces 段比对）")
     args = parser.parse_args()
 
     spec = load_acceptance(Path(args.spec))
@@ -1043,13 +985,6 @@ def main():
             "severity": "MEDIUM",
             "message": f"测试案例缺失真相意图说明（[意图]/Given/When/Then）: {m}",
         })
-    # F-18：非 HTTP 接口适配器检查（--non-http 开启且 SoT 有 non_http_interfaces 段）
-    if args.non_http:
-        nh_issues = check_non_http_consistency(spec, code_root)
-        issues.extend(nh_issues)
-        if nh_issues:
-            print(f"⚠️  {len(nh_issues)} 个非 HTTP 接口未在代码中找到适配器（MISSING_NON_HTTP_IMPL）")
-
     # 可选数据源
     jacoco = parse_jacoco(Path(args.jacoco)) if args.jacoco and Path(args.jacoco).exists() else None
     incr = incremental_coverage(jacoco, git_changed_java_files(args.base)) if jacoco else None

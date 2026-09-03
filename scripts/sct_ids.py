@@ -35,8 +35,3 @@ def rule_test_func(canonical_id: str) -> str:
 def scenario_test_func(scenario_id: str) -> str:
     """'F003-1' → 'test_sc_f003_1'"""
     return "test_sc_" + (scenario_id or "").lower().replace("-", "_")
-
-
-def non_http_test_filename(canonical_id: str) -> str:
-    """'MQ-001' → 'test_non_http_001.py'"""
-    return f"test_non_http_{id_suffix(canonical_id)}.py"

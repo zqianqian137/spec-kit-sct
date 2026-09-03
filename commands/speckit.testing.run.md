@@ -73,7 +73,6 @@ python $SCT_EXT_HOME/scripts/verification-gate.py \
   --tests tests/generated/ \
   --tasks specs/{feature}/tasks.md \
   --surefire backend/target/surefire-reports
-# --mutation-score 78.0   optional PITest/mutmut score to gate on (default threshold 60)
 # --skip-compile          skip the compile gate
 ```
 
@@ -82,7 +81,6 @@ python $SCT_EXT_HOME/scripts/verification-gate.py \
 | `PHANTOM_TASK` | tasks.md says `[X]` but no class/method evidence exists — claimed done, not done |
 | `COMPILE` | generated tests were never compiled |
 | `REAL_TESTS` | the report shows **0 actually executed** tests |
-| `MUTATION` | injected defects don't turn tests red |
 
 Same three-state output: **PASS / BLOCK / UNPROVEN**.
 

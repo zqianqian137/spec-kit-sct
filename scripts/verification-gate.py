@@ -15,12 +15,10 @@ SCT 工具 6：测试有效性验证门（诚实三态：PASS / BLOCK / UNPROVEN
   2. COMPILE       编译门：测试代码能否真正编译（mvn / gradle）
   3. REAL_TESTS    真实测试计数：从 surefire/junit 报告读**实际执行**的测试数，
                    防止"声称有测试、实际 0 个"（Vurnix 诚实门思路）
-  4. MUTATION      变异强度（可选）：PITest mutations.xml 变异得分，
-                   低于阈值说明测试抓不住注入的缺陷
 
 三态语义（关键设计：不允许"没验证"冒充"验证通过"）：
-  PASS      四项检查全部通过
-  BLOCK     发现幻影 / 编译失败 / 真实测试为 0 / 变异得分低于阈值
+  PASS      三项检查全部通过
+  BLOCK     发现幻影 / 编译失败 / 真实测试为 0
   UNPROVEN  无法验证（缺工具、缺环境、缺报告）—— 明确提示，不静默放行
 
 退出码：0=PASS  1=BLOCK  2=UNPROVEN
@@ -33,9 +31,6 @@ SCT 工具 6：测试有效性验证门（诚实三态：PASS / BLOCK / UNPROVEN
     --tasks specs/001-xxx/tasks.md \\
     --surefire backend/target/surefire-reports \\
     --report specs/001-xxx/reports/verification.md
-
-  # 可选增强：变异测试（PITest 报告）
-  python ... --mutation backend/target/pit-reports/mutations.xml --mutation-threshold 60
 
   # 内网无 Maven/无构建环境时跳过编译门
   python ... --skip-compile
@@ -218,39 +213,6 @@ def check_real_tests(surefire_dir: str | None) -> tuple:
 
 
 # =====================================================================
-# 4. 变异强度（可选）：PITest 变异得分
-# =====================================================================
-
-def check_mutation(mutation_path: str | None, threshold: float,
-                   manual_score: float | None = None) -> tuple:
-    """PITest mutations.xml → 变异得分；低于阈值说明测试抓不住注入缺陷
-
-    未提供报告 → UNPROVEN（变异测试是可选增强，不强制）。
-    """
-    if manual_score is not None:
-        score = manual_score
-        src = "（由 --mutation-score 直接提供，如 mutmut / 自研工具结果）"
-    elif mutation_path and Path(mutation_path).exists():
-        try:
-            root = ET.parse(mutation_path).getroot()
-        except Exception as e:
-            return UNPROVEN, None, f"变异报告解析失败：{e}"
-        muts = root.findall(".//mutation")
-        if not muts:
-            return UNPROVEN, None, "变异报告中没有 mutation 条目"
-        killed = sum(1 for m in muts if (m.get("detected") or "").lower() == "true")
-        score = killed / len(muts) * 100
-        src = f"（PITest：{killed}/{len(muts)} 个变异体被测试杀死）"
-    else:
-        return UNPROVEN, None, "未提供变异报告（--mutation / --mutation-score）；该检查为可选增强"
-
-    if score < threshold:
-        return BLOCK, score, (f"变异得分 {score:.1f}% 低于阈值 {threshold}%——"
-                              f"测试未能抓住注入的缺陷 {src}")
-    return PASS, score, f"变异得分 {score:.1f}%（阈值 {threshold}%）{src}"
-
-
-# =====================================================================
 # 报告渲染
 # =====================================================================
 
@@ -307,19 +269,13 @@ def main():
     p.add_argument("--tests", default="tests/generated", help="测试目录")
     p.add_argument("--tasks", help="tasks.md 路径（幻影检测数据源）")
     p.add_argument("--surefire", help="surefire-reports 目录（真实测试计数）")
-    p.add_argument("--mutation", help="PITest mutations.xml 路径（可选）")
-    p.add_argument("--mutation-score", type=float,
-                   help="直接提供变异得分（mutmut 等无 XML 报告时用）")
-    p.add_argument("--mutation-threshold", type=float, default=60.0,
-                   help="变异得分门禁阈值（%%），默认 60")
     p.add_argument("--skip-compile", action="store_true", help="跳过编译门")
-    p.add_argument("--skip-mutation", action="store_true", help="跳过变异检查")
     p.add_argument("--compile-timeout", type=int, default=300, help="编译超时（秒），默认 300")
     p.add_argument("--report", help="验证报告输出路径（markdown）")
     args = p.parse_args()
 
     spec = load_acceptance(Path(args.spec))
-    phantom_items, compile_detail, mutation_detail = [], "", ""
+    phantom_items, compile_detail = [], ""
 
     # 1. 幻影任务
     st_task, items, detail_task = check_phantom_tasks(args.tasks, args.code, args.tests)
@@ -339,15 +295,6 @@ def main():
     # 3. 真实测试计数
     st_tests, real_count, detail_tests = check_real_tests(args.surefire)
     checks.append({"name": "REAL_TESTS 真实测试计数", "status": st_tests, "detail": detail_tests})
-
-    # 4. 变异强度（可选）
-    if args.skip_mutation:
-        checks.append({"name": "MUTATION 变异强度", "status": UNPROVEN,
-                       "detail": "已通过 --skip-mutation 跳过"})
-    else:
-        st_mut, score, mutation_detail = check_mutation(
-            args.mutation, args.mutation_threshold, args.mutation_score)
-        checks.append({"name": "MUTATION 变异强度", "status": st_mut, "detail": mutation_detail})
 
     overall = _worst([c["status"] for c in checks])
 
