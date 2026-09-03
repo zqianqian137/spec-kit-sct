@@ -35,7 +35,27 @@ import hashlib
 import re
 import os
 from pathlib import Path
+import sct_ids
 from datetime import datetime
+
+# 生成器版本：写入 _codegen_meta.json，manifest 校验时若版本不符则强制再生成
+GENERATOR_VERSION = "1.1.3"
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def manifest_intact(out_dir: Path, expected: list) -> tuple:
+    """校验 write-once manifest：→ (是否完整, 问题清单[缺失/被改])"""
+    problems = []
+    for item in expected or []:
+        fp = out_dir / item.get("path", "")
+        if not fp.exists():
+            problems.append(f"缺失: {item.get('path')}")
+        elif sha256_file(fp) != item.get("sha256"):
+            problems.append(f"已被手工修改: {item.get('path')}")
+    return (not problems, problems)
 
 
 def load_acceptance(spec_path: Path) -> dict:
@@ -339,7 +359,7 @@ def gen_api_tests(apis: list, out_dir: Path, graph_index: dict = None,
         test_code = render_api_test(api, graph, base_url, global_exceptions)
         # F-2 修复：取 ID 最后一节（API-001→001；API-F003-001→001），
         # 避免同 feature 多 API 因 split('-')[1] 取到相同中段而互相覆盖
-        api_suffix = api["id"].split("-")[-1].lower()
+        api_suffix = sct_ids.id_suffix(api["id"])
         file_name = f"test_api_{api_suffix}.py"
         file_path = out_dir / file_name
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -431,7 +451,7 @@ def render_api_test(api: dict, graph: dict | None = None,
     spec_ref = api.get("spec_ref", "")
     req_fields = required_fields(api, graph)
     # F-2/F-3 修复：取 ID 最后一节；兼容两种 response schema
-    api_num = api_id.split("-")[-1].lower()
+    api_num = sct_ids.id_suffix(api_id)
     success_status, error_cases_raw = split_api_response_schema(api)
 
     # 成功用例（F-3：兼容 response.success / response_200 两种写法）
@@ -1308,7 +1328,7 @@ def _gen_python_rule_fallbacks(rules: list, out_dir: Path,
         for rule in rules:
             # F-5 修复：取 ID 最后一节（BR-F003-001→001），避免同 feature 多规则
             # 因 split('-')[1] 取到相同中段而生成重名函数（pytest 只跑最后一个）
-            rule_num = rule["id"].split("-")[-1].lower()
+            rule_num = sct_ids.id_suffix(rule["id"])
             rule_id = f"br_{rule_num}"
             rule_ref = rule["id"].upper()
             priority = rule.get("priority", "")
@@ -1346,7 +1366,7 @@ def _gen_python_rule_fallbacks(rules: list, out_dir: Path,
                 L.append("            found_any = True")
                 L.append("            break")
                 L.append("    if not found_any:")
-                L.append('        pytest.fail("规则 ' + rule_ref + ' 在 Java 单测层（首选 JUnit + Mockito）和 Python fallback 层均无可执行锚点。\\n"')
+                L.append('        pytest.skip("UNPROVEN: 规则 ' + rule_ref + ' 在 Java 单测层（首选 JUnit + Mockito）和 Python fallback 层均无可执行锚点。\\n"')
                 L.append('                 "  推荐：在 SoT 的 rules[' + rule_ref + '] 增加 target.class/method + test_cases 以生成 Java 单元测试；\\n"')
                 L.append('                 "  或在 checks 字段声明代码证据（注解/方法/异常）。")')
     body = "\n".join(L) + "\n"
@@ -1406,17 +1426,31 @@ def {func_name}():
     # Then：{sc.get("then", "")}
     # TODO: assert the observable outcome
     # 说明：验收场景是端到端用户旅程，单测层（离线静态校验）不在此执行。
+    # 状态建模（v1.1.3）：未绑定可执行 adapter = UNPROVEN（skip），不是 BLOCK（fail）。
     # 场景的可执行验证由 API 层（test_api_*.py）与 E2E 层（sct.e2e 生成的
-    # Playwright）承担。若需在 SoT 为该场景补充 target_api，可在此生成接口级断言。
-    pytest.fail(
-        f"场景 {sc_id} 在单测层（离线静态校验）不可执行：用户旅程应经 API/E2E 触发。"
-        f" 可执行验证见 test_api_*.py（参数/业务校验）与 e2e/auto_generated/*（端到端）。"
+    # Playwright）承担；gap 明细见 _scenario_gaps.json。
+    pytest.skip(
+        f"UNPROVEN: 场景 {sc_id} 在单测层无可执行 adapter（用户旅程应经 API/E2E 触发）；"
+        f"可执行验证见 test_api_*.py 与 e2e/auto_generated/*"
     )
 '''
     file_path = out_dir / "test_scenarios.py"
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(body, encoding="utf-8")
     generated.append(str(file_path))
+
+    # P0-3 修复：gap artifact —— 机器可读的 UNPROVEN 清单，供 check/verify 消费
+    gaps = [
+        {"scenario_id": sc.get("id", "?"), "feature_id": feat.get("id", "?"),
+         "status": "UNPROVEN", "reason": "no executable adapter at unit-test layer",
+         "required_adapter": "api | playwright",
+         "source": f"acceptance.yaml#features[{feat.get('id', '?')}].acceptance_scenarios[{sc.get('id', '?')}]"}
+        for feat in features for sc in feat.get("acceptance_scenarios", [])
+    ]
+    if gaps:
+        (out_dir / "_scenario_gaps.json").write_text(
+            json.dumps({"version": 1, "kind": "scenario_gaps", "gaps": gaps},
+                       ensure_ascii=False, indent=2), encoding="utf-8")
     return generated
 
 
@@ -1428,7 +1462,7 @@ def gen_non_http_tests(non_http_interfaces: list, out_dir: Path) -> list:
         return generated
     for nh in non_http_interfaces:
         nh_id = nh.get("id", "MQ-000")
-        suffix = nh_id.split("-")[-1].lower()
+        suffix = sct_ids.id_suffix(nh_id)
         func_name = f"test_mq_{suffix}"
         nh_type = nh.get("type", "UNKNOWN")
         dest = nh.get("destination", "")
@@ -1457,9 +1491,10 @@ def {func_name}():
     Then:  handler {handler or "（未指定）"} 消费并产出 output={contract.get("output", "void")}
     """
     # TODO: 发送测试消息到 {dest or "目标"}，验证消费逻辑（需消息中间件/调度环境）
-    pytest.fail(
-        f"非 HTTP 接口 {nh_id}（{nh_type}）需消息中间件/调度环境方可执行；"
-        f"请按 acceptance.yaml#non_http_interfaces[{nh_id}] 契约实现消费验证。"
+    # 状态建模（v1.1.3）：环境未就绪 = UNPROVEN（skip），不是 BLOCK（fail）
+    pytest.skip(
+        f"UNPROVEN: 非 HTTP 接口 {nh_id}（{nh_type}）需消息中间件/调度环境方可执行；"
+        f"契约见 acceptance.yaml#non_http_interfaces[{nh_id}]"
     )
 '''
         file_path = out_dir / f"test_non_http_{suffix}.py"
@@ -1508,7 +1543,7 @@ def gen_coverage_report(acceptance: dict, out_dir: Path, field_drifts: list = No
 """
     for api in apis:
         # F-2/F-3 修复：报告命名与 gen_api_tests 完全一致（取 [-1]）；用例数兼容两种 schema
-        api_num = api["id"].split("-")[-1].lower()
+        api_num = sct_ids.id_suffix(api["id"])
         file_name = f"test_api_{api_num}.py"
         case_count = 0
         s_status, s_errs = split_api_response_schema(api)
@@ -1529,7 +1564,7 @@ def gen_coverage_report(acceptance: dict, out_dir: Path, field_drifts: list = No
 """
     for rule in rules:
         # F-8 修复：与 gen_rule_tests 的命名完全一致（取 [-1]），报告与代码对得上
-        rule_suffix = rule["id"].split("-")[-1].lower()
+        rule_suffix = sct_ids.id_suffix(rule["id"])
         report += f"| {rule['id']} | {rule['text']} | {rule.get('priority', '-')} | test_rules.py::test_br_{rule_suffix} |\n"
 
     report += f"""
@@ -1574,7 +1609,7 @@ def gen_coverage_report(acceptance: dict, out_dir: Path, field_drifts: list = No
 """
         for nh in non_http_interfaces:
             nh_id = nh.get("id", "?")
-            suffix = nh_id.split("-")[-1].lower()
+            suffix = sct_ids.id_suffix(nh_id)
             report += (f"| {nh_id} | {nh.get('name', '')} | {nh.get('type', '')} "
                        f"| `{nh.get('destination', '')}` | test_non_http_{suffix}.py::test_mq_{suffix} |\n")
 
@@ -1706,12 +1741,22 @@ def main():
             prev_meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
             prev_meta = {}
-        has_tests = any(out_dir.glob("test_*.py"))
+        # P0-5 修复：缓存命中必须满足——SoT/CodeGraph hash 一致 + 生成器版本一致
+        # + write-once manifest 完整（手改/删文件/半生成状态都会击穿缓存再生成）
+        expected = prev_meta.get("expected_outputs") or []
+        intact, problems = manifest_intact(out_dir, expected)
+        version_ok = prev_meta.get("generator_version") == GENERATOR_VERSION
         if (prev_meta.get("sot_hash") == sot_hash
-                and prev_meta.get("codegraph_hash") == cg_hash and has_tests):
-            print("⚡ hash 缓存命中：SoT 与 CodeGraph 均未变化，跳过再生成（0 个文件）。")
+                and prev_meta.get("codegraph_hash") == cg_hash
+                and version_ok and expected and intact):
+            print("⚡ hash 缓存命中：SoT 与 CodeGraph 均未变化，manifest 完整，跳过再生成（0 个文件）。")
             print("   如需强制再生成：--force")
             return
+        if prev_meta.get("sot_hash") == sot_hash and not intact and expected:
+            print(f"⚠️  manifest 校验发现 {len(problems)} 处异常（{'; '.join(problems[:3])}"
+                  f"{'…' if len(problems) > 3 else ''}），击穿缓存重新生成。")
+        elif not version_ok and prev_meta.get("generator_version"):
+            print(f"ℹ️  生成器版本变化（{prev_meta.get('generator_version')} → {GENERATOR_VERSION}），重新生成。")
 
     codegraph = load_codegraph(args.codegraph)
     graph_index = build_graph_index(codegraph)
@@ -1817,8 +1862,10 @@ def main():
 
     # 机器可读产物：sct.check 自动发现后整合进最终测试报告
     # （头部 CodeGraph 标注 / 3.2 实现列 / 6.2 FIELD_DRIFT 节 / 系统级异常）
+    # 注：expected_outputs（write-once manifest）在全部文件生成完后补充（见 main 末尾）
     codegen_meta = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "generator_version": GENERATOR_VERSION,
         "codegraph": args.codegraph or "",
         "api_annotations": api_annotations,
         "field_drifts": field_drifts,
@@ -1831,10 +1878,6 @@ def main():
     if not args.only:
         codegen_meta["sot_hash"] = sot_hash
         codegen_meta["codegraph_hash"] = cg_hash
-    meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(json.dumps(codegen_meta, ensure_ascii=False, indent=2),
-                         encoding="utf-8")
-    print(f"  + {meta_path}")
 
     # 规则测试已在上方（API 测试之前）生成，含 BINDING_DRIFT 检测
 
@@ -1857,6 +1900,26 @@ def main():
                                  global_exceptions, api_annotations, binding_drifts,
                                  non_http_interfaces)
     print(f"  + {report}")
+
+    # ---- write-once manifest（P0-5 修复）：记录全部生成文件的 sha256，
+    # check 侧据此验证"生成测试未被手改"；缓存命中也要求 manifest 完整匹配。
+    all_outputs = list(api_files) + list(rule_files) + list(scenario_files) + list(non_http_files)
+    conftest = out_dir / "conftest.py"
+    if conftest.exists():
+        all_outputs.append(str(conftest))
+    manifest = []
+    for f in all_outputs:
+        fp = Path(f)
+        if fp.exists():
+            manifest.append({
+                "path": fp.name,
+                "sha256": hashlib.sha256(fp.read_bytes()).hexdigest(),
+            })
+    codegen_meta["expected_outputs"] = manifest
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(json.dumps(codegen_meta, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
+    print(f"  + {meta_path}")
 
     print(f"\nDone. Generated {len(api_files) + len(rule_files) + len(scenario_files) + len(non_http_files)} test files.")
     print(f"API coverage: {len(api_files)}/{len(apis)}")

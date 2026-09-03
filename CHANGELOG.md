@@ -3,6 +3,31 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.1.3] - 2026-09-03
+
+### Fixed — P0 级：让 README 宣称的不变量真正被代码强制（外部源码审查响应）
+
+- **P0-2 `sct.check` 三态门禁**：最终判定从临时布尔（`p0_fail = high or api_fail>0`）改为结构化证据模型——
+  `NO_HIGH_DRIFT` / `LINE_COVERAGE`（≥80% 真阻断，不再只打印）/ `TEST_EXECUTION`（覆盖全部生成测试，
+  不再只看 `test_api_` 前缀）/ `GENERATED_ARTIFACT_INTEGRITY`，每项独立判 PASS/BLOCK/UNPROVEN，
+  整体取最严；退出码对齐 `sct.verify`：PASS=0 / BLOCK=1 / UNPROVEN=2（预检确认跳过仍为 3）
+- **P0-3 场景/非 HTTP/规则无锚点桩**：`pytest.fail` → `pytest.skip(reason="UNPROVEN: ...")`——
+  "无可执行 adapter/环境"是证据不足（UNPROVEN），不是行为违约（BLOCK）；消除 check 第一步 pytest 全跑结构性必红。
+  场景 gap 另落机器可读产物 `_scenario_gaps.json`（status/reason/required_adapter）
+- **P0-5 write-once 真强制**：`_codegen_meta.json` 新增 `generator_version` + `expected_outputs`（每个生成文件 sha256）。
+  缓存命中条件从"存在任意 test_*.py"改为 manifest 完整匹配——手改/删文件/生成器升级全部击穿缓存重新生成；
+  `sct.check` 新增 `GENERATED_ARTIFACT_INTEGRITY` 证据项，手改即 BLOCK 并给出 `--force` 恢复路径
+- **P0-4 canonical ID 层**：新增 `scripts/sct_ids.py`（`id_suffix`/`safe_slug`/文件名与函数名换算），
+  消除四个脚本散落的 `split("-")`；修复报告渲染中 JUnit 结果关联仍用中段（`split("-")[1]`）导致多段 ID
+  （`API-F003-001`）执行结果永远关联不上的残留 bug
+
+### Changed — 方法论重定位：独立测试流，不动 spec-kit 骨架
+
+- `acceptance.yaml` 从"唯一真相源（SoT）"正名为**测试契约（test contract）**：`spec.md` 仍是需求真相源
+  （spec-kit 骨架所有，SCT 不碰），acceptance.yaml 是测试域的派生投影——派生关系，非平行关系
+- README 方法论章节新增"测试流四阶段"框架：**测试计划**（merge+impact）→ **测试案例**（codegen）→
+  **测试执行**（check+e2e）→ **测试覆盖**（check 覆盖段+verify），命令名不变
+
 ## [1.1.2] - 2026-09-03
 
 ### Removed — 取消 preset 产物（社区目录只收录扩展）

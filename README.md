@@ -1,14 +1,17 @@
 # SCT — Spec-Code-Test Consistency (Speckit Extension)
 
 A [Spec Kit](https://github.com/github/spec-kit) extension that implements the
-**SCT methodology**: keep a single source of truth, derive tests from it, and
-gate every change on a three-way consistency check — so quality is *built in*
-by the forward chain (spec → code → test), not patched on afterward.
+**SCT methodology**: an independent **test flow** (测试计划 → 测试案例 → 测试执行
+→ 测试覆盖) that hangs off the untouched Spec Kit backbone. Test expectations
+are derived from a machine-readable test contract, tests are write-once, and
+every change is gated on three-state evidence — so quality is *built in* by the
+forward chain (spec → code → test), not patched on afterward.
 
-> 中文简介：SCT 是一套 spec→code→test→check→verify 的前向保证链方法论——
-> 唯一的期望来源是 `acceptance.yaml`（SoT），测试由它机械派生（write-once），
-> 每次变更用三方一致性 + 覆盖率 + 测试有效性门禁确认前向链路没有断。
-> 面向内网/离线环境设计：确定性脚本优先，模型只辅助、不作判决。
+> 中文简介：SCT 是一条独立于 spec-kit 主骨架的**测试流**——主骨架
+> （specify→plan→tasks→implement）不动，`spec.md` 仍是需求真相源；SCT 从它
+> 派生测试契约 `acceptance.yaml`，机械派生 write-once 测试，再用三态证据门
+> （PASS/BLOCK/UNPROVEN）确认测试执行、覆盖与有效性。面向内网/离线环境设计：
+> 确定性脚本优先，模型只辅助、不作判决。
 
 ## Methodology
 
@@ -32,42 +35,55 @@ code disagree, and nobody notices until the bug reaches production. SCT treats
 this as the **central risk** and attacks it with a *forward* chain that makes
 divergence loud and cheap.
 
-### 2. One source of truth — the SoT
+### 2. The test contract — derived from spec, never competing with it
 
-SCT collapses the sources into a single machine-readable contract:
-**`acceptance.yaml`** (the *SoT* — Single source of Truth), merged from
-`spec.md` / `plan.md` / `data-model.md` / `api-contracts.md` by `sct.merge`.
+Spec Kit's backbone already owns the *requirement* truth: `spec.md` is where
+intent lives, and SCT does not touch that skeleton. What the backbone does not
+own is the *testing* truth: which acceptance points exist, what inputs and
+expected outcomes each rule has, which error codes an API must return.
 
-The SoT is the **only place where expectations live**: business rules
-(`rules[].text`), their inputs and expected outcomes (`test_cases`), API
-contracts (`apis[]`), acceptance journeys (`acceptance_scenarios`), and
-non-HTTP contracts (`non_http_interfaces`). Everything downstream reads from it
-and never writes back.
+SCT fills that gap with **`acceptance.yaml` — the test contract**: a
+machine-readable, testing-domain projection merged from `spec.md` / `plan.md`
+/ `data-model.md` / `api-contracts.md` by `sct.merge`.
+
+> The relationship is **derived, not parallel**. `spec.md` stays the source of
+> truth for requirements; `acceptance.yaml` is the source of truth *for test
+> expectations only* — business rules (`rules[].text`) with their
+> `test_cases`, API contracts (`apis[]`), acceptance journeys
+> (`acceptance_scenarios`), and non-HTTP contracts (`non_http_interfaces`).
+> When the spec changes, you re-merge the contract; you never fork the
+> requirement itself.
+
+### 2.1 A separate test flow, hanging off the untouched backbone
+
+SCT does not modify `specify → plan → tasks → implement`. It adds an
+independent **test flow** that starts after (or alongside) implementation:
+
+| Test-flow stage | Commands | Question answered |
+|---|---|---|
+| **测试计划** (plan) | `sct.merge` · `sct.impact` | what to test, and how deep (L1/L2/L3) |
+| **测试案例** (case) | `sct.codegen` | what to test *with* (write-once derived tests) |
+| **测试执行** (run) | `sct.check` · `sct.e2e` | did it pass — PASS / BLOCK / UNPROVEN |
+| **测试覆盖** (coverage) | `sct.check` · `sct.verify` | coverage evidence + test-effectiveness evidence |
 
 ```mermaid
 flowchart LR
-    subgraph MERGE["1 · sct.merge — build the SoT"]
-        A[spec.md] --> S[acceptance.yaml]
-        B[plan.md / data-model.md] --> S
-        C[api-contracts.md] --> S
-        D[source of truth: expectations only live here] -.- S
+    subgraph BB["Spec Kit backbone (untouched)"]
+        SP[specify] --> PL[plan] --> TK[tasks] --> IM[implement]
     end
 
-    subgraph DERIVE["2 · sct.codegen — derive write-once tests"]
-        S --> J[JUnit + Mockito unit tests]
-        S --> P[pytest API tests + conftest]
-        S --> SC[scenario stubs · non-HTTP stubs]
+    subgraph TF["SCT test flow (independent)"]
+        direction LR
+        M["1 测试计划<br/>sct.merge → acceptance.yaml<br/>sct.impact → L1/L2/L3"]
+        C["2 测试案例<br/>sct.codegen<br/>write-once tests"]
+        R["3 测试执行<br/>sct.check / sct.e2e<br/>PASS·BLOCK·UNPROVEN"]
+        V["4 测试覆盖<br/>sct.check coverage<br/>sct.verify effectiveness"]
+        M --> C --> R --> V
     end
 
-    subgraph GATE["3 · implement → sct.impact scopes the change"]
-        E[code diff] --> I[change-impact.md P0/P1/P2 + L1/L2/L3 tier]
-    end
-
-    J --> C3[sct.check<br/>spec ↔ code ↔ test<br/>+ coverage + drift]
-    P --> C3
-    SC --> C3
-    I --> C3
-    C3 --> V[sct.verify<br/>test *effectiveness*<br/>PASS/BLOCK/UNPROVEN]
+    SP -.->|spec.md / plan.md| M
+    IM -.->|code diff| M
+    IM ==> TF
 ```
 
 ### 3. The forward guarantee chain
@@ -124,11 +140,19 @@ it there", and the failing test itself stays the alarm, not the verdict.
 ### 6. check is a confirmation gate, not a rescue net
 
 `sct.check` runs the tests, compares spec ↔ code ↔ test three ways, applies the
-coverage gate, and writes a human-review report. The gate is:
+coverage gate, and writes a human-review report. Since v1.1.3 the gate is a
+**structured three-state evidence model** — every item is judged independently
+and the overall verdict takes the strictest:
 
-- SoT-scope coverage **100%** (every registered rule / API / scenario has a test)
-- incremental line coverage **≥ 80%** (JaCoCo), when `--jacoco` is given
-- **zero HIGH drifts**
+| Evidence item | PASS | BLOCK | UNPROVEN |
+|---|---|---|---|
+| `NO_HIGH_DRIFT` | zero HIGH drifts | any HIGH drift | — |
+| `LINE_COVERAGE` | incremental line coverage ≥ 80% (JaCoCo) | below 80% | no `--jacoco` + `--base` |
+| `TEST_EXECUTION` | all generated tests pass (not just `test_api_`) | any failure / error | no `--junit`, or zero executed |
+| `GENERATED_ARTIFACT_INTEGRITY` | all generated files match their sha256 manifest | hand-edited / missing files | legacy output without manifest |
+
+Exit codes: `PASS=0`, `BLOCK=1`, `UNPROVEN=2` — the same semantics as
+`sct.verify`. **Missing evidence never masquerades as green.**
 
 A pipeline that *relies* on `check` to catch what the forward chain should have
 prevented is a process disease, not a working loop — `check` confirms the chain,
@@ -217,7 +241,7 @@ user decides, per change, whether and when to run `merge` / `codegen` / `check`
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.1.2.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.1.3.zip
 ```
 
 Or install from a local checkout during development:
@@ -247,13 +271,13 @@ specify extension add --dev /path/to/spec-kit-sct
 ## Quick start
 
 ```bash
-# 1. Build the single source of truth from your spec artifacts
+# 1. 测试计划: derive the test contract from your spec artifacts
 specify sct.merge --spec specs/001/spec.md --out specs/001/acceptance.yaml
 
-# 2. Derive write-once tests
+# 2. 测试案例: derive write-once tests
 specify sct.codegen --spec specs/001/acceptance.yaml --out tests/generated
 
-# 3. After implementation, run these manually (nothing auto-fires):
+# 3. 测试执行 + 测试覆盖 (after implementation, nothing auto-fires):
 specify sct.impact            # optional: reverse-trace the change first
 specify sct.check --spec specs/001/acceptance.yaml --code backend/src/main/java --tests tests/generated
 

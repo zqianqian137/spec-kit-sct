@@ -60,6 +60,7 @@ import sys
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
+import sct_ids
 from typing import Dict, List, Set, Tuple
 
 # JaCoCo 计数器类型 → 中文名（只取报告关注的三个维度）
@@ -316,6 +317,117 @@ def summarize_exec(results: Dict[str, str]) -> Tuple[int, int, int, int]:
 
 
 # =====================================================================
+# 三态门禁（v1.1.3 起）：与 sct.verify 同一语义 —— UNPROVEN ≠ PASS
+# 每个证据项独立判 PASS/BLOCK/UNPROVEN/NOT_APPLICABLE，整体取最严。
+# 退出码：PASS=0 / BLOCK=1 / UNPROVEN=2（预检用户确认跳过仍为 3）。
+# =====================================================================
+
+VERDICT_ORDER = {"BLOCK": 3, "UNPROVEN": 2, "PASS": 1, "NOT_APPLICABLE": 0}
+
+
+def evaluate_gates(issues: List[dict], junit: Dict[str, str] | None,
+                   incr: dict | None, coverage_target: int,
+                   skip_api_tests: bool, tests_root: Path | None = None,
+                   codegen_meta: dict | None = None) -> List[dict]:
+    """把 README 宣称的门禁逐项落成结构化证据。
+
+    修复 P0-2：增量行覆盖率与全部生成测试的执行结果必须参与最终判定，
+    不再只打印进报告。junit 统计覆盖 test_api_/test_rules/test_scenarios/
+    test_non_http_ 全部生成产物，不再只看 test_api_ 前缀。
+    """
+    gates: List[dict] = []
+
+    # 1) NO_HIGH_DRIFT —— 三方一致性（spec↔code↔test）
+    high = [i for i in issues if i["severity"] == "HIGH"]
+    gates.append({
+        "id": "NO_HIGH_DRIFT",
+        "verdict": "BLOCK" if high else "PASS",
+        "detail": f"{len(high)} 个 HIGH 漂移" if high else "无 HIGH 漂移",
+    })
+
+    # 2) LINE_COVERAGE —— 增量行覆盖率（README 宣称 ≥80% 门禁，必须真阻断）
+    if skip_api_tests:
+        gates.append({"id": "LINE_COVERAGE", "verdict": "NOT_APPLICABLE",
+                      "detail": "--skip-api-tests：接口层跳过，覆盖率不判定"})
+    elif incr is None:
+        gates.append({"id": "LINE_COVERAGE", "verdict": "UNPROVEN",
+                      "detail": "未提供 --jacoco + --base，增量覆盖率未验证"})
+    else:
+        line = incr["counters"].get("LINE")
+        if not line or (line[0] + line[1]) == 0:
+            gates.append({"id": "LINE_COVERAGE", "verdict": "UNPROVEN",
+                          "detail": "diff 与 JaCoCo 类无交集，增量覆盖率无法计算"})
+        else:
+            missed, covered = line
+            pct_val = covered / (missed + covered) * 100
+            ok = pct_val >= coverage_target
+            gates.append({
+                "id": "LINE_COVERAGE",
+                "verdict": "PASS" if ok else "BLOCK",
+                "detail": f"增量行覆盖率 {pct_val:.1f}%（门禁 ≥{coverage_target}%）",
+            })
+
+    # 3) TEST_EXECUTION —— 全部生成测试的真实执行结果（不只 test_api_）
+    if skip_api_tests:
+        gates.append({"id": "TEST_EXECUTION", "verdict": "NOT_APPLICABLE",
+                      "detail": "--skip-api-tests：执行层跳过"})
+    elif not junit:
+        gates.append({"id": "TEST_EXECUTION", "verdict": "UNPROVEN",
+                      "detail": "未提供 --junit，测试执行结果未验证"})
+    else:
+        p, f, sk, total = summarize_exec(junit)
+        if total == 0 or (p == 0 and f == 0):
+            gates.append({"id": "TEST_EXECUTION", "verdict": "UNPROVEN",
+                          "detail": f"junit 中无可执行用例（总数 {total}，跳过 {sk}）"})
+        elif f > 0:
+            gates.append({"id": "TEST_EXECUTION", "verdict": "BLOCK",
+                          "detail": f"{f} 个用例失败/错误（通过 {p}，跳过 {sk}，总数 {total}）"})
+        else:
+            gates.append({"id": "TEST_EXECUTION", "verdict": "PASS",
+                          "detail": f"{p}/{total} 通过（跳过 {sk}）"})
+
+    # 4) GENERATED_ARTIFACT_INTEGRITY —— write-once manifest 校验（P0-5）
+    expected = (codegen_meta or {}).get("expected_outputs") or []
+    if not expected:
+        gates.append({"id": "GENERATED_ARTIFACT_INTEGRITY", "verdict": "UNPROVEN",
+                      "detail": "无 write-once manifest（旧版生成），重跑 sct.codegen 后本项可验证"})
+    elif tests_root is not None:
+        import hashlib as _hl
+        problems = []
+        for item in expected:
+            fp = tests_root / item.get("path", "")
+            if not fp.exists():
+                problems.append(f"缺失 {item.get('path')}")
+            elif _hl.sha256(fp.read_bytes()).hexdigest() != item.get("sha256"):
+                problems.append(f"手改 {item.get('path')}")
+        if problems:
+            gates.append({"id": "GENERATED_ARTIFACT_INTEGRITY", "verdict": "BLOCK",
+                          "detail": f"生成测试被改动/缺失 {len(problems)} 处（{'；'.join(problems[:3])}"
+                                    f"{'…' if len(problems) > 3 else ''}）——write-once 纪律被破坏，"
+                                    f"重跑 sct.codegen --force 恢复"})
+        else:
+            gates.append({"id": "GENERATED_ARTIFACT_INTEGRITY", "verdict": "PASS",
+                          "detail": f"{len(expected)} 个生成文件 hash 全部一致"})
+    return gates
+
+
+def overall_verdict(gates: List[dict]) -> str:
+    """整体取最严；NOT_APPLICABLE 不参与。全 N/A 时退化为 UNPROVEN（无证据不放绿）。"""
+    effective = [g["verdict"] for g in gates if g["verdict"] != "NOT_APPLICABLE"]
+    if not effective:
+        return "UNPROVEN"
+    return max(effective, key=lambda v: VERDICT_ORDER[v])
+
+
+def verdict_exit_code(verdict: str) -> int:
+    return {"PASS": 0, "BLOCK": 1, "UNPROVEN": 2}.get(verdict, 2)
+
+
+VERDICT_ICON = {"PASS": "✅ PASS", "BLOCK": "❌ BLOCK",
+                "UNPROVEN": "⚠️ UNPROVEN", "NOT_APPLICABLE": "➖ N/A"}
+
+
+# =====================================================================
 # 意图说明完整性检查（单元测试模板约定）
 # =====================================================================
 
@@ -391,7 +503,7 @@ def check_consistency(spec: dict, code_apis: Set[str], test_cov: Dict[str, Set[s
     # 2. spec API vs test（F-2 命名修复后按 ID 末段匹配：API-F003-001 ↔ test_api_001.py）
     spec_api_suffix = {}
     for a in spec.get("apis", []):
-        spec_api_suffix[a["id"].split("-")[-1].lower()] = a["id"]
+        spec_api_suffix[sct_ids.id_suffix(a["id"])] = a["id"]
     test_api_suffixes = {s.lower() for s in test_cov["apis"]}
     missing_in_test = [spec_api_suffix[s] for s in spec_api_suffix
                        if s not in test_api_suffixes]
@@ -404,8 +516,8 @@ def check_consistency(spec: dict, code_apis: Set[str], test_cov: Dict[str, Set[s
 
     # 3. 业务规则覆盖（F-5 命名修复后按 ID 末段匹配：BR-F003-001 ↔ test_br_001）
     spec_rules = {r["id"] for r in spec.get("rules", [])}
-    spec_rule_suffix = {r["id"].split("-")[-1].lower(): r["id"] for r in spec.get("rules", [])}
-    test_rule_suffixes = {x.split("-")[-1].lower() for x in test_cov["rules"]}
+    spec_rule_suffix = {sct_ids.id_suffix(r["id"]): r["id"] for r in spec.get("rules", [])}
+    test_rule_suffixes = {sct_ids.id_suffix(x) for x in test_cov["rules"]}
     missing_rules = [spec_rule_suffix[s] for s in spec_rule_suffix
                      if s not in test_rule_suffixes]
     for m in sorted(missing_rules):
@@ -468,8 +580,8 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
                        jacoco: dict | None, incr: dict | None,
                        junit: Dict[str, str] | None, impact_pri: Dict[str, str],
                        test_cov: Dict[str, Set[str]], intent_missing: List[str],
-                       intent_total: int, meta: dict) -> Tuple[str, bool]:
-    """渲染详细测试报告 markdown → (报告文本, 是否 FAIL)"""
+                       intent_total: int, meta: dict, gates: List[dict]) -> Tuple[str, str]:
+    """渲染详细测试报告 markdown → (报告文本, 三态结论 PASS/BLOCK/UNPROVEN)"""
     now = datetime.now().isoformat(timespec="seconds")
     apis = spec.get("apis", [])
     rules = spec.get("rules", [])
@@ -521,23 +633,22 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
     if junit:
         api_pass, api_fail, api_skip, api_total = summarize_exec(junit_status_by_prefix(junit, "test_api_"))
 
-    # ===== 1. 执行摘要 =====
-    p0_fail = high or (junit and api_fail > 0)
-    final_ok = not p0_fail
+    # ===== 1. 执行摘要（三态门禁：UNPROVEN ≠ PASS）=====
+    verdict = overall_verdict(gates)
     L.append("## 1. 执行摘要")
     L.append("")
-    L.append("| 维度 | 结果 | 门禁 |")
-    L.append("|------|------|------|")
-    L.append(f"| 三方一致性 | {len(high)} 个 HIGH 漂移 | 无 HIGH |")
-    L.append(f"| 增量行覆盖率 | {incr_line_pct} | ≥ {stats['line_coverage_target']}% |")
-    if junit:
-        L.append(f"| 接口测试执行 | {api_pass}/{api_total} 通过，失败 {api_fail} | 全部通过 |")
-    else:
-        L.append("| 接口测试执行 | 未提供 junit（--junit） | 全部通过 |")
+    L.append("| 证据项 | 判定 | 说明 |")
+    L.append("|--------|------|------|")
+    for g in gates:
+        L.append(f"| {g['id']} | {VERDICT_ICON[g['verdict']]} | {g['detail']} |")
     if cg_src:
-        L.append(f"| 字段级漂移 (FIELD_DRIFT) | {len(cg_drifts)} 个 | 建议 0（不阻塞放行） |")
-    L.append(f"| **总结论** | {'✅ PASS' if final_ok else '❌ FAIL'} | — |")
+        L.append(f"| 字段级漂移 (FIELD_DRIFT) | ➖ 参考 | {len(cg_drifts)} 个（建议 0，不阻塞放行） |")
+    L.append(f"| **总结论** | **{VERDICT_ICON[verdict]}** | 取全部证据项最严判定 |")
     L.append("")
+    if verdict == "UNPROVEN":
+        L.append("> ⚠️ **UNPROVEN 不是 PASS**：存在未验证的证据项（见上表），"
+                 "补齐证据（--junit / --jacoco + --base）后重跑方可放行。")
+        L.append("")
 
     # ===== 2. JaCoCo =====
     L.append("## 2. JaCoCo 代码覆盖率")
@@ -597,7 +708,7 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
         L.append("| API ID | 接口名 | 方法 | 路径 | 案例数 | 通过 | 失败 | 跳过 | 状态 |")
         L.append("|--------|--------|------|------|--------|------|------|------|------|")
     for a in apis:
-        num = a["id"].split("-")[1] if "-" in a["id"] else a["id"]
+        num = sct_ids.id_suffix(a["id"])  # P0-4: 末段匹配，与生成文件名 test_api_<suffix>.py 一致
         cases = junit_status_by_prefix(junit, f"test_api_{num.lower()}") if junit else {}
         if cases:
             p, f, sk, t = summarize_exec(cases)
@@ -744,16 +855,21 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
     if meta.get("mode") == "incremental":
         L.append("- 覆盖模式: **incremental（增量）**——存量代码不在本轮范围，"
                  "全量覆盖率仅供参考不作门禁；门禁 = SoT 范围内覆盖 100% + 增量行覆盖率")
-    L.append(f"- **最终结论**: {'✅ PASS（可合入）' if final_ok else '❌ FAIL（先消除 HIGH 漂移与失败案例再合入）'}")
+    verdict = overall_verdict(gates)
+    L.append(f"- **最终结论**: {VERDICT_ICON[verdict]}"
+             + ("（可合入）" if verdict == "PASS"
+                else "（先消除 BLOCK 项再合入）" if verdict == "BLOCK"
+                else "（证据不足，补齐 --junit / --jacoco + --base 后重跑；UNPROVEN ≠ PASS）"))
     L.append("")
-    L.append("> FAIL 处置路径：改 spec / 改 code / 改 SoT → 重跑 `sct.codegen` → `sct.check` → `sct.e2e`。")
-    return "\n".join(L), final_ok
+    L.append("> BLOCK 处置路径：改 spec / 改 code / 改 SoT → 重跑 `sct.codegen` → `sct.check` → `sct.e2e`。")
+    return "\n".join(L), verdict
 
 
-def print_summary(issues: List[dict], stats: dict, report_path: str | None, final_ok: bool):
-    """终端摘要（详细内容看报告文件）"""
+def print_summary(issues: List[dict], stats: dict, report_path: str | None,
+                  verdict: str, gates: List[dict] | None = None):
+    """终端摘要（详细内容看报告文件）；返回三态退出码 0/1/2"""
     print("=" * 60)
-    print("三方一致性校验摘要")
+    print("三方一致性校验摘要（三态门禁）")
     print("=" * 60)
     print(f"API 覆盖率: {stats['api_coverage']:.1f}% (目标 {stats['api_target']}%)")
     print(f"规则覆盖率: {stats['rule_coverage']:.1f}% (目标 {stats['rule_target']}%)")
@@ -762,9 +878,13 @@ def print_summary(issues: List[dict], stats: dict, report_path: str | None, fina
     else:
         high_count = sum(1 for i in issues if i["severity"] == "HIGH")
         print(f"发现 {len(issues)} 个漂移（HIGH {high_count} 个），详见报告")
+    if gates:
+        for g in gates:
+            print(f"  [{VERDICT_ICON[g['verdict']]}] {g['id']}: {g['detail']}")
+    print(f"\n总结论: {VERDICT_ICON.get(verdict, verdict)}")
     if report_path:
-        print(f"\n📄 详细测试报告: {report_path}")
-    return 0 if final_ok else 1
+        print(f"📄 详细测试报告: {report_path}")
+    return verdict_exit_code(verdict)
 
 
 def preflight_api_tests(tests_root: Path, timeout: float) -> int:
@@ -911,19 +1031,24 @@ def main():
             "base": args.base if jacoco else "N/A", "jacoco": args.jacoco or "",
             "mode": mode, "codegen_meta": codegen_meta}
 
+    # 三态门禁评估（P0-2 修复：覆盖率与全部测试执行结果必须参与判定）
+    gates = evaluate_gates(issues, junit, incr, stats["line_coverage_target"],
+                           skip_api_tests=args.skip_api_tests,
+                           tests_root=Path(args.tests), codegen_meta=codegen_meta)
+    verdict = overall_verdict(gates)
+
     # 落盘详细报告 + 终端摘要
     report_path = None
-    final_ok = not any(i["severity"] == "HIGH" for i in issues)
     if args.report:
-        report, final_ok = render_test_report(
+        report, verdict = render_test_report(
             spec, issues, stats, jacoco, incr, junit, impact_pri,
-            test_cov, intent_missing, intent_total, meta)
+            test_cov, intent_missing, intent_total, meta, gates)
         rp = Path(args.report)
         rp.parent.mkdir(parents=True, exist_ok=True)
         rp.write_text(report, encoding="utf-8")
         report_path = str(rp)
 
-    sys.exit(print_summary(issues, stats, report_path, final_ok))
+    sys.exit(print_summary(issues, stats, report_path, verdict, gates))
 
 
 if __name__ == "__main__":
