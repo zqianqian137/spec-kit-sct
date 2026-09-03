@@ -3,6 +3,34 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.2.0] - 2026-09-03
+
+### Changed — 方法论重构：从"一致性理论"回归"测试域扩展"
+
+上一版（v1.1.x）累积了 10 节方法论、8 类漂移归因、前向保证链等重理论，维护性差且偏离实际需求。
+本次按五个实际目标重构，砍掉理论包袱：
+
+- **定位重述**：SCT = spec-kit 的**测试域扩展**，不是新真相源理论。`spec.md` 是需求来源，
+  `acceptance.yaml` 是**测试计划**（派生投影）。README 方法论从 10 节精简为 5 节（不漏测 / 需求实现 /
+  可审核报告 / 三层覆盖 / 硬门禁），篇幅减半
+- **语言中立**：明确 Java/JUnit 只是**默认 adapter**，测试计划格式、覆盖率门禁、报告均与语言无关，
+  emitter 可插拔。README 与手册新增"Language neutrality"章节
+
+### Changed — 门禁标准收紧
+
+- **增量行覆盖率门禁 80% → 90%**（`line_coverage_target`；命令文档与 `docs/unit-test-standards.md` 同步）
+- 门禁表述统一为"覆盖 ≥90% + 案例 100% 通过 + 无漏测无未实现"，非 0 退出码即阻断
+
+### Added
+
+- `SCT介绍材料.md`：中文一页纸介绍材料，供内网团队培训与技术评审使用——
+  是什么 / 解决五个问题 / 怎么工作 / 四条铁律 / 门禁标准 / 快速上手 / FAQ / 与其他实践的关系
+
+### Docs
+
+- 手册第一部分重写：1.1 定位、1.2 五个目标表、1.3 三条铁律、1.3.1 语言中立、1.3.2 概念速查；
+  全文术语统一（SoT / 测试契约 → 测试计划）
+
 ## [1.1.3] - 2026-09-03
 
 ### Fixed — P0 级：让 README 宣称的不变量真正被代码强制（外部源码审查响应）

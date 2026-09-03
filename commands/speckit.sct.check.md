@@ -82,7 +82,7 @@ CodeGraph annotations and FIELD_DRIFT are auto-merged into the report via
 
 Present the test report summary:
 - HIGH drift count (gate: 0) and failed cases
-- Incremental line coverage (gate: ≥ 80%)
+- Incremental line coverage (gate: ≥ 90%)
 - Changed-point review table (section 5) — pending human review sign-off
 - FIELD_DRIFT count (section 6.2, advisory)
 

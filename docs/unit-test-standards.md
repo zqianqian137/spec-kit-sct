@@ -94,7 +94,7 @@ void methodName_ShouldX_WhenY() {
 
 | 指标 | 阈值 | 数据来源 |
 |---|---|---|
-| 增量行覆盖率 | ≥ `[80%]` | JaCoCo XML（`--jacoco`） |
+| 增量行覆盖率 | ≥ `[90%]` | JaCoCo XML（`--jacoco`） |
 | 增量分支覆盖率 | ≥ `[60%]` | JaCoCo XML |
 | SoT 范围覆盖率 | 100%（SoT 登记的每条 API/rule 必须有对应测试） | `consistency-check.py` |
 | HIGH 漂移数 | 0 | `consistency-check.py` |

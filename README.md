@@ -15,205 +15,107 @@ forward chain (spec → code → test), not patched on afterward.
 
 ## Methodology
 
-SCT (Spec-Code-Test Consistency) is a methodology, not just a command set. This
-section explains the *why* — the problem it targets, the principles that keep
-the pipeline honest, and the anti-patterns it is built to catch.
+SCT is a **test-domain extension for Spec Kit**. It does not replace the
+backbone, invent a new source of truth, or dictate a language. It answers five
+practical questions — the same five a test lead asks before a release.
 
-### 1. The problem: three truths drift apart
-
-In spec-driven development, three artifacts claim to describe the same change —
-and they silently diverge:
-
-| Artifact | Drifts when |
-|---|---|
-| **spec.md / plan.md** | the requirement changes but nobody updates the doc |
-| **code** | the implementer interprets the requirement differently, or takes shortcuts |
-| **tests** | someone "fixes" a failing test to match the code instead of the requirement |
-
-Left alone, the divergence compounds: the tests turn green while the spec and the
-code disagree, and nobody notices until the bug reaches production. SCT treats
-this as the **central risk** and attacks it with a *forward* chain that makes
-divergence loud and cheap.
-
-### 2. The test contract — derived from spec, never competing with it
-
-Spec Kit's backbone already owns the *requirement* truth: `spec.md` is where
-intent lives, and SCT does not touch that skeleton. What the backbone does not
-own is the *testing* truth: which acceptance points exist, what inputs and
-expected outcomes each rule has, which error codes an API must return.
-
-SCT fills that gap with **`acceptance.yaml` — the test contract**: a
-machine-readable, testing-domain projection merged from `spec.md` / `plan.md`
-/ `data-model.md` / `api-contracts.md` by `sct.merge`.
-
-> The relationship is **derived, not parallel**. `spec.md` stays the source of
-> truth for requirements; `acceptance.yaml` is the source of truth *for test
-> expectations only* — business rules (`rules[].text`) with their
-> `test_cases`, API contracts (`apis[]`), acceptance journeys
-> (`acceptance_scenarios`), and non-HTTP contracts (`non_http_interfaces`).
-> When the spec changes, you re-merge the contract; you never fork the
-> requirement itself.
-
-### 2.1 A separate test flow, hanging off the untouched backbone
-
-SCT does not modify `specify → plan → tasks → implement`. It adds an
-independent **test flow** that starts after (or alongside) implementation:
-
-| Test-flow stage | Commands | Question answered |
+| # | Question | How SCT answers it |
 |---|---|---|
-| **测试计划** (plan) | `sct.merge` · `sct.impact` | what to test, and how deep (L1/L2/L3) |
-| **测试案例** (case) | `sct.codegen` | what to test *with* (write-once derived tests) |
-| **测试执行** (run) | `sct.check` · `sct.e2e` | did it pass — PASS / BLOCK / UNPROVEN |
-| **测试覆盖** (coverage) | `sct.check` · `sct.verify` | coverage evidence + test-effectiveness evidence |
+| 1 | 测试不漏测？ | every acceptance point in the spec is mapped to a test — **no test = 漏测, gated** |
+| 2 | 需求都实现了？ | each requirement is checked against the code: declared-but-missing is a gate failure |
+| 3 | 报告能不能人工审核？ | one report: what was tested, what was not, and why — reviewable, and re-runnable |
+| 4 | 测试手段齐不齐？ | three layers: **unit → API → e2e** (e2e = scenario cases only) |
+| 5 | 门禁硬不硬？ | **coverage ≥ 90%**, **cases 100% passing**, no missing coverage → merge blocked |
 
-```mermaid
-flowchart LR
-    subgraph BB["Spec Kit backbone (untouched)"]
-        SP[specify] --> PL[plan] --> TK[tasks] --> IM[implement]
-    end
+### 1. Not another source of truth — a test plan derived from the spec
 
-    subgraph TF["SCT test flow (independent)"]
-        direction LR
-        M["1 测试计划<br/>sct.merge → acceptance.yaml<br/>sct.impact → L1/L2/L3"]
-        C["2 测试案例<br/>sct.codegen<br/>write-once tests"]
-        R["3 测试执行<br/>sct.check / sct.e2e<br/>PASS·BLOCK·UNPROVEN"]
-        V["4 测试覆盖<br/>sct.check coverage<br/>sct.verify effectiveness"]
-        M --> C --> R --> V
-    end
+Spec Kit's backbone already owns requirements: `spec.md` is the truth, and SCT
+never writes to it. SCT adds one artifact — **`acceptance.yaml`, the test plan**:
+a machine-readable list of what must be tested, derived from `spec.md` /
+`plan.md` / `data-model.md` / `api-contracts.md`.
 
-    SP -.->|spec.md / plan.md| M
-    IM -.->|code diff| M
-    IM ==> TF
+```text
+spec.md (requirement truth, backbone-owned)
+    │  sct.merge
+    ▼
+acceptance.yaml (test plan: rules, APIs, scenarios, expected outcomes)
+    │  sct.codegen
+    ▼
+three layers of tests → sct.check → gate + report
 ```
 
-### 3. The forward guarantee chain
+The relationship is **derived, never competing**: change the requirement in
+`spec.md`, re-merge the test plan. Change what you expect from a test, edit the
+test plan. There is exactly one place where an expectation lives — and it is
+never the test file itself.
 
-SCT's core idea: **quality is built in by the forward chain (spec → code →
-test), not patched on afterward.** Compare the two flows:
+### 2. No missing coverage — the requirement × test matrix
 
-| | Patch-on (传统流程病) | Forward chain (SCT) |
-|---|---|---|
-| Tests appear | hand-written after the code, "to cover" it | **derived from the SoT**, mechanically |
-| When code & spec disagree | tests are adjusted to stay green | the divergence **fails loudly** |
-| Who judges | whoever wrote the test (biased) | the SoT (the agreed truth) |
-| Cost of drift | discovered late, expensive | surfaced at every change, cheap |
+`漏测` (missed coverage) is the failure SCT is primarily built to prevent, and
+it is a **gate**, not a warning. For every item registered in the test plan,
+`check` requires:
 
-Each command confirms the previous link *before* the chain moves on; the SoT is
-never silently amended to excuse a failing test.
+- an API contract → a test that exercises it (success **and** each declared error case)
+- a business rule → a test asserting it
+- an acceptance scenario → an e2e case
 
-### 4. Derived tests are write-once — and assertions never come from code
+Anything in the plan without a test is reported as **MISSING_TEST** and blocks
+the merge. Anything declared in the plan but absent from the code is reported as
+**MISSING_IMPL** and blocks the merge. Together these answer question 2: *has
+the code actually implemented what the requirement asked?*
 
-`codegen` derives tests from the SoT. Input *values* come from
-`test_cases.inputs`; the *shape* (parameter types / order) comes from the public
-signature — **read at generation time, not reverse-engineered from the method
-body**. Assertions / expected exceptions come exclusively from
-`test_cases.expect`.
+### 3. Three layers — unit, API, e2e (scenarios only)
 
-> 反推断言 = 自己出题自己改卷 (setting the exam and grading it yourself).
-> If the assertion were inferred from the code, the code's mistakes would be
-> *legalized* by the test. SCT never lets CodeGraph — or the LLM — infer an
-> expectation; it only helps *construct the request*.
-
-Tests are **write-once**: to change behaviour, change the SoT and regenerate.
-Hand-editing a generated test is a workflow violation, because a hand-edited
-test has silently stopped representing the SoT.
-
-### 5. Drift is a signal, not a verdict
-
-When the SoT and the code disagree, SCT classifies *which link broke* instead of
-showing a confusing wall of red:
-
-| Drift | Broken link | Fix direction |
-|---|---|---|
-| `MISSING_IMPL` | Spec → Code | implement what the SoT declares |
-| `MISSING_TEST` | Code → Test derivation | run `sct.codegen` (never hand-write to silence) |
-| `UNSPEC_API` | SoT registration gap | register the API in the SoT |
-| `MISSING_RULE_TEST` | rule without test evidence | add `checks` / `target+test_cases` |
-| `FIELD_DRIFT` | SoT DTO ↔ code DTO | reconcile which field is right |
-| `BINDING_DRIFT` | SoT ↔ public contract | rename / regenerate after SoT fix |
-| `MISSING_INTENT` | test without truth intent | regenerate intent-carrying tests |
-| `MISSING_NON_HTTP_IMPL` | non-HTTP contract unregistered | implement the listener/scheduler |
-
-The 8-type taxonomy turns "tests are red" into "this specific link broke — fix
-it there", and the failing test itself stays the alarm, not the verdict.
-
-### 6. check is a confirmation gate, not a rescue net
-
-`sct.check` runs the tests, compares spec ↔ code ↔ test three ways, applies the
-coverage gate, and writes a human-review report. Since v1.1.3 the gate is a
-**structured three-state evidence model** — every item is judged independently
-and the overall verdict takes the strictest:
-
-| Evidence item | PASS | BLOCK | UNPROVEN |
+| Layer | Derived from | Output | Notes |
 |---|---|---|---|
-| `NO_HIGH_DRIFT` | zero HIGH drifts | any HIGH drift | — |
-| `LINE_COVERAGE` | incremental line coverage ≥ 80% (JaCoCo) | below 80% | no `--jacoco` + `--base` |
-| `TEST_EXECUTION` | all generated tests pass (not just `test_api_`) | any failure / error | no `--junit`, or zero executed |
-| `GENERATED_ARTIFACT_INTEGRITY` | all generated files match their sha256 manifest | hand-edited / missing files | legacy output without manifest |
+| **L1 unit** | `rules[]` + method signatures | language-native tests | **language-agnostic** — Java/JUnit today via adapter; the emitter is pluggable |
+| **L2 API** | `apis[]` + contracts | executable HTTP tests | success path + every declared error code |
+| **L3 e2e** | `acceptance_scenarios` | Playwright scenario cases | **scenario cases only** — G/W/T, no DSL to learn |
 
-Exit codes: `PASS=0`, `BLOCK=1`, `UNPROVEN=2` — the same semantics as
-`sct.verify`. **Missing evidence never masquerades as green.**
+Two principles keep the layers honest:
 
-A pipeline that *relies* on `check` to catch what the forward chain should have
-prevented is a process disease, not a working loop — `check` confirms the chain,
-it does not rescue it.
+- **Assertions never come from code.** The code is a black box under test. Input
+  *values* and expected outcomes come from the test plan; the code only supplies
+  the *shape* (parameter types). Inferring expectations from the implementation
+  is 自己出题自己改卷 — setting the exam and grading it yourself.
+- **Generated tests are write-once.** Change the test plan and regenerate.
+  Hand-editing is detected via a sha256 manifest and blocks the gate.
 
-### 7. The tier gate: spend AI tokens by risk
+### 4. The gate blocks — 90% coverage, 100% passing
 
-`sct.impact` reverse-traces the change and classifies it L1 / L2 / L3 so the
-pipeline never spends full cost on a typo:
+`check` produces structured evidence and takes the strictest verdict:
 
-| Tier | Typical change | Pipeline |
-|---|---|---|
-| **L1 小改** | ≤ 2 files, no contract change | impact only → existing regression |
-| **L2 中改** | API contract / rule change, ≤ 5 APIs | codegen (targeted) + check (full report) |
-| **L3 大改** | new feature / multi-module / migration | full SOP + e2e + verify |
-
-Duration / token control is a first-class concern: hash-cached regeneration
-(no-op when SoT + CodeGraph are unchanged), `--only` targeted regeneration, and
-`L1` produces no downstream artifacts at all.
-
-### 8. Test existence ≠ test effectiveness (`sct.verify`)
-
-`sct.check` proves "tests exist and cover the SoT". It cannot prove the harder
-claim: **these tests would actually fail if the code were broken.** `sct.verify`
-closes that gap with an honest three-state gate:
-
-| Check | Catches |
-|---|---|
-| `PHANTOM_TASK` | tasks.md says `[X]` but no class/method evidence exists in code — *claimed done, not done* |
-| `COMPILE` | generated tests were never compiled |
-| `REAL_TESTS` | the report shows **0 actually executed** tests |
-| `MUTATION` | injected defects don't turn the tests red (score < threshold) |
-
-Its output is deliberately not a binary pass/fail:
-
-- **PASS** — the tests compile, really run, and (when enabled) kill mutants.
-- **BLOCK** — a phantom / compile failure / zero execution / weak mutation.
-- **UNPROVEN** — cannot be verified (no Maven, no surefire reports, no tasks.md).
-  **UNPROVEN is not PASS** — an unverified claim must not masquerade as a green.
-
-### 9. Where SCT sits vs. related practices
-
-| Practice | Timing | Question it answers | SCT relation |
+| Evidence | PASS | BLOCK | UNPROVEN |
 |---|---|---|---|
-| **TDD** | red → green before code | "does the new code satisfy the test?" | complementary; SCT is *post*-implementation by default (brownfield-friendly) and can run `test_timing: pre` |
-| **BDD** | scenario authoring | "is the behaviour expressed in a shared language?" | SCT keeps G/W/T in the SoT and bridges them to Playwright (`sct.e2e`) |
-| **test coverage tools** | after tests run | "what lines were touched?" | SCT *uses* JaCoCo for the 80% gate, then asks the stronger question with `sct.verify` |
-| **LLM-driven review** | after code | "does the code look compliant?" | SCT prefers *deterministic* derivation from the SoT — the LLM assists, never verdicts |
+| `NO_MISSING` | every plan item has a test **and** an implementation | any 漏测 / 未实现 | — |
+| `LINE_COVERAGE` | ≥ **90%** | below 90% | no `--jacoco` + `--base` |
+| `TEST_EXECUTION` | all cases pass (100%) | any failure | no `--junit` / zero executed |
+| `ARTIFACT_INTEGRITY` | generated files match their manifest | hand-edited / missing | legacy output |
 
-The deterministic-script-first stance is deliberate: SCT is designed to run on
-an **air-gapped intranet with a weak offline model**, where a chain that depends
-on LLM judgement for every check would be slow, costly and unreliable.
+Exit codes: **PASS 0 · BLOCK 1 · UNPROVEN 2** — missing evidence never
+masquerades as green (`UNPROVEN ≠ PASS`). Anything other than 0 blocks the merge.
 
-### 10. Anti-patterns SCT is built to catch
+### 5. A report a human can actually review
 
-- ❌ Silently editing a generated test green — the alarm is not the verdict.
-- ❌ Writing the assertion by reading the code — self-grading exams.
-- ❌ `coverage = len(scenarios)` — a report that cannot lie about coverage.
-- ❌ Claiming `[X]` without implementation — phantom tasks.
-- ❌ Saying "verified" without having verified — **UNPROVEN ≠ PASS**.
-- ❌ Letting `check` become the rescue net for a broken forward chain.
+The gate verdict is one line; the report is the deliverable. It contains, for
+human review:
+
+- the full **requirement × code × test matrix** (what is covered, what is not, and why not)
+- per-layer execution results with pass/fail/skip counts
+- coverage (overall and incremental) with the classes touched by this change
+- a **missing-coverage list** — the concrete items a human must still handle
+
+It is written to be re-run after fixes and to be handed to a reviewer who never
+saw the generation step.
+
+### Language neutrality
+
+SCT is not a Java tool. Java/JUnit is the **default adapter** because that is
+the stack it was built against first — but the test-plan format, the coverage
+gate, and the report are language-independent, and the emitter is pluggable.
+The test plan describes *what* must be true; the adapter decides *how* to say it
+in a given language.
+
 
 ## What it provides
 
@@ -241,7 +143,7 @@ user decides, per change, whether and when to run `merge` / `codegen` / `check`
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.1.3.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.2.0.zip
 ```
 
 Or install from a local checkout during development:

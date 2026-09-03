@@ -345,7 +345,7 @@ def evaluate_gates(issues: List[dict], junit: Dict[str, str] | None,
         "detail": f"{len(high)} 个 HIGH 漂移" if high else "无 HIGH 漂移",
     })
 
-    # 2) LINE_COVERAGE —— 增量行覆盖率（README 宣称 ≥80% 门禁，必须真阻断）
+    # 2) LINE_COVERAGE —— 增量行覆盖率（门禁 ≥90%，必须真阻断）
     if skip_api_tests:
         gates.append({"id": "LINE_COVERAGE", "verdict": "NOT_APPLICABLE",
                       "detail": "--skip-api-tests：接口层跳过，覆盖率不判定"})
@@ -538,7 +538,7 @@ def check_consistency(spec: dict, code_apis: Set[str], test_cov: Dict[str, Set[s
         "rule_coverage": rule_cov,
         "api_target": 100,
         "rule_target": 100,
-        "line_coverage_target": 80,
+        "line_coverage_target": 90,
     }
 
 

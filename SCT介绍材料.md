@@ -1,0 +1,156 @@
+# SCT 介绍材料
+
+> SCT = **S**pec-**C**ode-**T**est，spec-kit 的**测试域扩展**
+> 版本：v1.2.0　适用：内网试点项目组 / 技术评审
+
+---
+
+## 一、SCT 是什么
+
+一句话：
+
+> **spec-kit 管需求怎么定、怎么实现；SCT 管测试怎么测全、测过的有没有证据、能不能放行。**
+
+它**不改** spec-kit 的原有流程（specify → plan → tasks → implement 原样跑），
+只在旁边补一条完整的测试链路：从需求派生测试计划，自动生成三层测试，跑完出可审核报告，最后用硬门禁决定是否放行。
+
+**SCT 不做的三件事**（划清边界，避免误用）：
+
+1. 不造"第二个真相源"——`spec.md` 仍是需求来源，SCT 只从它派生**测试计划**；
+2. 不绑定语言——Java/JUnit 只是当前默认 adapter，测试计划格式与门禁与语言无关；
+3. 不自动改变原流程——6 个命令全部手动触发，跑不跑由人决定。
+
+---
+
+## 二、解决什么问题
+
+SCT 的全部目标就是这五条，每条都有对应的硬机制：
+
+| # | 目标 | 具体做法 | 不达标会怎样 |
+|---|---|---|---|
+| 1 | **测试不漏测** | 测试计划里每个验收点必须映射到测试 | 有条目没测试 → `MISSING_TEST` → 阻断 |
+| 2 | **需求都实现了** | 计划声明的条目逐一对照代码验证 | 声明了代码里没有 → `MISSING_IMPL` → 阻断 |
+| 3 | **输出真正的测试报告** | 需求 × 代码 × 测试矩阵 + 执行结果 + 覆盖率 + 漏测清单 | 报告是交付物，供人工审核与复跑 |
+| 4 | **测试手段分层** | 单测 → 接口 → e2e（e2e 只要场景案例） | 三层各自出证据 |
+| 5 | **门禁要阻断** | 覆盖率 ≥ 90%、案例 100% 通过、无漏测无未实现 | 任一不满足 → 退出码非 0 → 阻断合并 |
+
+---
+
+## 三、怎么工作
+
+```text
+【spec-kit 主骨架 · 不动】specify → plan → tasks → implement
+                              │
+                              ▼
+【SCT 测试域扩展】
+
+  ① 测试计划
+     sct.merge    spec.md → acceptance.yaml（测什么：规则/接口/场景 + 期望值）
+     sct.impact   本次变更影响哪些场景（P0/P1/P2）+ 投入定级（L1/L2/L3）
+
+  ② 测试生成
+     sct.codegen  从测试计划派生三层测试（write-once：改计划重生成，不手改测试）
+
+  ③ 测试执行
+     sct.check    真实执行 + 覆盖率 + 门禁 + 出报告
+     sct.e2e      Playwright 场景案例（G/W/T，只跑验收场景）
+
+  ④ 门禁
+     覆盖率 ≥ 90% · 案例 100% 通过 · 无漏测 · 无未实现
+     → PASS(0) / BLOCK(1) / UNPROVEN(2)，非 0 即阻断
+```
+
+### 三层测试各自管什么
+
+| 层 | 从什么派生 | 产出 | 说明 |
+|---|---|---|---|
+| **L1 单测** | `rules[]` + 方法签名 | 语言原生测试（当前 JUnit+Mockito） | 规则级验证；emitter 可换 |
+| **L2 接口** | `apis[]` + 契约 | 可执行 HTTP 测试 | 成功路径 + 每个声明的异常码 |
+| **L3 e2e** | `acceptance_scenarios` | Playwright 场景案例 | **只要场景案例**（G/W/T），不需要学 DSL |
+
+---
+
+## 四、四条铁律
+
+1. **断言期望只来自测试计划，绝不从代码反推。**
+   代码是被测黑盒；读代码只用来绑定参数"形状"，期望值永远来自计划。
+   从代码反推断言 = 自己出题自己改卷。
+
+2. **测试 write-once：只改测试计划，重新生成，不手改生成的测试。**
+   由 sha256 manifest 强制——手改会被 `check` 判 BLOCK 并自动击穿缓存重生成。
+
+3. **UNPROVEN ≠ PASS：证据不足不得冒充通过。**
+   缺 junit、缺 jacoco 时结论是 UNPROVEN（退出码 2），不是 PASS。
+
+4. **check 是确认门，不是补救兜底。**
+   偶尔 BLOCK 后按归因修一次正常；长期靠它循环兜底，说明前向链路没转起来，要修流程。
+
+---
+
+## 五、门禁标准（可直接写进团队规范）
+
+| 证据项 | PASS | BLOCK | UNPROVEN |
+|---|---|---|---|
+| `NO_MISSING` | 每个计划条目都有测试 **且** 代码里有实现 | 有漏测 / 有未实现 | — |
+| `LINE_COVERAGE` | 增量行覆盖率 ≥ **90%** | < 90% | 未给 `--jacoco` + `--base` |
+| `TEST_EXECUTION` | 全部案例通过（100%） | 有失败/错误 | 未给 `--junit` 或 0 执行 |
+| `ARTIFACT_INTEGRITY` | 生成文件 sha256 与 manifest 一致 | 手改 / 缺失 | 旧版产物无 manifest |
+
+**退出码：PASS=0 · BLOCK=1 · UNPROVEN=2。非 0 即阻断。**
+
+---
+
+## 六、快速上手
+
+```bash
+# ① 从需求派生测试计划
+specify sct.merge --spec specs/001/spec.md --out specs/001/acceptance.yaml
+
+# ② 人工补充/校正测试计划（断言值、异常码、验收场景）
+#    这一步是人力投入的重点，也是测试质量的关键
+
+# ③ 派生三层测试
+specify sct.codegen --spec specs/001/acceptance.yaml --out tests/generated
+
+# ④ 实现后跑门禁 + 出报告
+specify sct.check --spec specs/001/acceptance.yaml \
+  --code backend/src/main/java --tests tests/generated \
+  --jacoco backend/target/site/jacoco/jacoco.xml \
+  --junit tests/generated/junit-report.xml \
+  --report specs/001/reports/test-report.md
+
+# ⑤（可选）e2e 场景回归 + 有效性验证
+specify sct.e2e
+specify sct.verify --code backend/src/main/java --tasks specs/001/tasks.md \
+  --surefire backend/target/surefire-reports
+```
+
+---
+
+## 七、常见问题
+
+**Q：和 spec-kit 原有的 tasks/checklist 冲突吗？**
+不冲突。spec-kit 管"做什么、怎么做"，SCT 管"测没测、测全没、能不能放行"。SCT 读 spec 但不写回。
+
+**Q：必须 Java 吗？**
+不是。当前默认 adapter 是 Java/JUnit（行内现状），测试计划格式、门禁、报告都与语言无关。
+
+**Q：测试要不要人工写？**
+测试计划要人工定（这是测试设计的核心工作），测试代码由计划派生。落地后日常只维护计划。
+
+**Q：覆盖率 90% 达不到怎么办？**
+要么补测试，要么在计划里说明为何该分支不可测（走人工审核豁免）。门禁的意义是让"达不到"这件事暴露出来，而不是悄悄过去。
+
+**Q：报告给谁看？**
+给测试负责人和评审人——报告里有完整的"测了什么/没测什么/为什么"，不跑生成流程的人也能审核。
+
+---
+
+## 八、与其他实践的关系
+
+| 实践 | 关系 |
+|---|---|
+| **TDD** | 互补。SCT 默认 post（代码先行，适合存量项目），也支持 pre（测试先行） |
+| **BDD** | SCT 把 G/W/T 放在测试计划里，并桥接到 Playwright e2e |
+| **覆盖率工具（JaCoCo）** | SCT **使用**它做 90% 门禁，但不止于此——还检查漏测与实现缺失 |
+| **AI 审查** | SCT 优先用确定性脚本，模型只辅助（提取、漂移建议），不作最终判决 |
