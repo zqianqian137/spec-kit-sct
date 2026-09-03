@@ -208,8 +208,7 @@ on LLM judgement for every check would be slow, costly and unreliable.
 alters the original `specify / plan / implement / constitution` flow. The 6
 commands above are invoked **manually by the user**, after implementation — the
 user decides, per change, whether and when to run `merge` / `codegen` / `check`
-/ `impact` / `e2e` / `verify`. The companion preset (below) only appends
-optional methodology hints; it never auto-runs an SCT command either.
+/ `impact` / `e2e` / `verify`.
 
 ## Installation
 
@@ -218,7 +217,7 @@ optional methodology hints; it never auto-runs an SCT command either.
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.1.1.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.1.2.zip
 ```
 
 Or install from a local checkout during development:
@@ -226,21 +225,6 @@ Or install from a local checkout during development:
 ```bash
 specify extension add --dev /path/to/spec-kit-sct
 ```
-
-### Companion preset (optional, hint-only command overrides)
-
-If you want SCT-flavored `speckit.specify` / `speckit.plan` / `speckit.implement`
-/ `speckit.constitution` **without** changing their behavior, add the companion
-preset. Its overrides only append **optional methodology hints** (keep an
-`acceptance.yaml` SoT, run the sct commands after implementation) — they never
-auto-run an SCT command and never alter the original flow:
-
-```bash
-specify preset add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.1.1.zip
-```
-
-The preset lives in `presets/sct/` and requires the `sct` extension (or can be
-used standalone for terminology-only projects).
 
 > 已指向真实仓库 `zqianqian137/spec-kit-sct`。catalog 的 `documentation` /
 > `download_url` / `homepage` 均指向该仓库，发布时无需再替换。
@@ -253,7 +237,9 @@ used standalone for terminology-only projects).
 
 ## When NOT to use it
 
-- You only need light terminology/template overrides — a **preset** is simpler.
+- You want the original Speckit flow to stay untouched AND want light
+  overrides — install the extension only and manually run `sct.*` per change;
+  there is no auto-attach preset in this release.
 - You expect SCT to auto-run inside your `plan`/`implement` flow — it does not;
   the 6 commands are manual by design, so you must invoke them yourself after
   implementation.

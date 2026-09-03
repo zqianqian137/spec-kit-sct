@@ -3,6 +3,13 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.1.2] - 2026-09-03
+
+### Removed — 取消 preset 产物（社区目录只收录扩展）
+- 删除 `presets/sct/preset.yml` 及 `presets/sct/commands/` 下四个 override 命令文件（`speckit.specify`/`plan`/`implement`/`constitution`）
+- `catalog-entry.json` 删除 `provides.presets` 段（含 path 引用 + overrides 列表）；README 移除 Companion preset 章节与"the companion preset"提及，匹配社区目录只接受扩展的口径
+- 行为零变化：`extension.yml` 早已不依赖 preset；新用户只看扩展即可
+
 ## [1.1.1] - 2026-09-02
 
 ### Added — README 方法论详解章节（社区展示 + 内网研读）
