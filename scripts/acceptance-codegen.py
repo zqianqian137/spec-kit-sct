@@ -26,7 +26,7 @@ acceptance-codegen.py
         --codegraph codegraph.json    # 可选：CodeGraph 导出，增强生成
 
 附带产物：--out 目录落盘 _codegen_meta.json（API 实现标注 + FIELD_DRIFT），
-sct.check 自动发现后把 CodeGraph 标注与字段级漂移整合进最终测试报告。
+testing.run 自动发现后把 CodeGraph 标注与字段级漂移整合进最终测试报告。
 """
 import yaml
 import json
@@ -350,7 +350,7 @@ def gen_api_tests(apis: list, out_dir: Path, graph_index: dict = None,
     for api in apis:
         graph = match_graph(api, graph_index) if graph_index else None
         field_drifts.extend(diff_api_fields(api, graph))
-        # 实现标注（即生成测试文件头部的 CodeGraph 注释），供 sct.check 整合进测试报告
+        # 实现标注（即生成测试文件头部的 CodeGraph 注释），供 testing.run 整合进测试报告
         annotations[api["id"]] = {
             "matched": graph is not None,
             "controller": (graph or {}).get("controller", ""),
@@ -1427,7 +1427,7 @@ def {func_name}():
     # TODO: assert the observable outcome
     # 说明：验收场景是端到端用户旅程，单测层（离线静态校验）不在此执行。
     # 状态建模（v1.1.3）：未绑定可执行 adapter = UNPROVEN（skip），不是 BLOCK（fail）。
-    # 场景的可执行验证由 API 层（test_api_*.py）与 E2E 层（sct.e2e 生成的
+    # 场景的可执行验证由 API 层（test_api_*.py）与 E2E 层（testing.cases 生成的
     # Playwright）承担；gap 明细见 _scenario_gaps.json。
     pytest.skip(
         f"UNPROVEN: 场景 {sc_id} 在单测层无可执行 adapter（用户旅程应经 API/E2E 触发）；"
@@ -1835,7 +1835,7 @@ def main():
     else:
         print("⏭️  --skip-api-tests：跳过接口测试生成")
 
-    # --only 定向生成：合并上次 meta 的标注/漂移——meta 是 sct.check 报告的数据源，
+    # --only 定向生成：合并上次 meta 的标注/漂移——meta 是 testing.run 报告的数据源，
     # 不能因定向生成丢失未涉及 API 的实现标注与 FIELD_DRIFT
     if args.only and meta_path.exists():
         try:
@@ -1860,7 +1860,7 @@ def main():
     if codegraph:
         print(f"  派生异常用例（约束/枚举/类型）: {derived_total} 个（test_*_cg_error_*）")
 
-    # 机器可读产物：sct.check 自动发现后整合进最终测试报告
+    # 机器可读产物：testing.run 自动发现后整合进最终测试报告
     # （头部 CodeGraph 标注 / 3.2 实现列 / 6.2 FIELD_DRIFT 节 / 系统级异常）
     # 注：expected_outputs（write-once manifest）在全部文件生成完后补充（见 main 末尾）
     codegen_meta = {

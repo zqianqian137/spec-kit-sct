@@ -5,12 +5,12 @@ SCT 工具 6：测试有效性验证门（诚实三态：PASS / BLOCK / UNPROVEN
 
 归属：Speckit 扩展 `sct` 内置实现（v1.1.0）
 
-弥补 SCT 的实质缺口：sct.check 回答"测试有没有、覆盖到没有"，
+弥补 SCT 的实质缺口：testing.run 回答"测试有没有、覆盖到没有"，
 本门回答"**这些测试真能抓住 bug 吗**"——即测试**有效性**验证。
 
 四项检查：
   1. PHANTOM_TASK  幻影任务：tasks.md 标 [X] 但代码中找不到实现证据
-                   （与 sct.check 的 MISSING_IMPL 反向互补：那里查
+                   （与 testing.run 的 MISSING_IMPL 反向互补：那里查
                      "SoT 定义了代码没做"，这里查"声称做了实际没做"）
   2. COMPILE       编译门：测试代码能否真正编译（mvn / gradle）
   3. REAL_TESTS    真实测试计数：从 surefire/junit 报告读**实际执行**的测试数，

@@ -1,5 +1,5 @@
 # =====================================================================
-# 变更影响报告产物模板（SCT 阶段 4：speckit.sct.impact）
+# 变更影响报告产物模板（SCT 阶段 4：speckit.testing.plan）
 # ---------------------------------------------------------------------
 # 生成物：change-impact.md
 # 生成器：change-impact.py（render_report）
@@ -14,7 +14,7 @@
 **Diff**: base=main head=HEAD（或 --staged）
 **变更级别**: L1（小改：存量回归即可，本文件到此为止）/ L2（中改：定向 codegen + check）/ L3（大改：完整 SOP + e2e）
 
-> 级别由 sct.impact Step 0 判定，写入本行；下游命令（codegen/check/e2e）
+> 级别由 testing.plan Step 0 判定，写入本行；下游命令（codegen/check/e2e）
 > 读取此行决定是否短路。L1 时本文件只需级别 + 一行理由。
 
 ## 📊 Summary
@@ -59,7 +59,7 @@
 ## 🎯 Recommended E2E Scenarios
 
 > 每个场景均来自 SoT 的 acceptance_scenarios（given/when/then），
-> 供阶段 5（sct.e2e）生成 Playwright 回归脚本。
+> 供阶段 5（testing.cases）生成 Playwright 回归脚本。
 
 | Priority | Scenario | Given → When → Then | Match Rule |
 |----------|----------|---------------------|------------|

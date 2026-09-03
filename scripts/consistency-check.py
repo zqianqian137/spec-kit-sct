@@ -317,7 +317,7 @@ def summarize_exec(results: Dict[str, str]) -> Tuple[int, int, int, int]:
 
 
 # =====================================================================
-# 三态门禁（v1.1.3 起）：与 sct.verify 同一语义 —— UNPROVEN ≠ PASS
+# 三态门禁（v1.1.3 起）：与 testing.run 同一语义 —— UNPROVEN ≠ PASS
 # 每个证据项独立判 PASS/BLOCK/UNPROVEN/NOT_APPLICABLE，整体取最严。
 # 退出码：PASS=0 / BLOCK=1 / UNPROVEN=2（预检用户确认跳过仍为 3）。
 # =====================================================================
@@ -390,7 +390,7 @@ def evaluate_gates(issues: List[dict], junit: Dict[str, str] | None,
     expected = (codegen_meta or {}).get("expected_outputs") or []
     if not expected:
         gates.append({"id": "GENERATED_ARTIFACT_INTEGRITY", "verdict": "UNPROVEN",
-                      "detail": "无 write-once manifest（旧版生成），重跑 sct.codegen 后本项可验证"})
+                      "detail": "无 write-once manifest（旧版生成），重跑 testing.cases 后本项可验证"})
     elif tests_root is not None:
         import hashlib as _hl
         problems = []
@@ -404,7 +404,7 @@ def evaluate_gates(issues: List[dict], junit: Dict[str, str] | None,
             gates.append({"id": "GENERATED_ARTIFACT_INTEGRITY", "verdict": "BLOCK",
                           "detail": f"生成测试被改动/缺失 {len(problems)} 处（{'；'.join(problems[:3])}"
                                     f"{'…' if len(problems) > 3 else ''}）——write-once 纪律被破坏，"
-                                    f"重跑 sct.codegen --force 恢复"})
+                                    f"重跑 testing.cases --force 恢复"})
         else:
             gates.append({"id": "GENERATED_ARTIFACT_INTEGRITY", "verdict": "PASS",
                           "detail": f"{len(expected)} 个生成文件 hash 全部一致"})
@@ -861,7 +861,7 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
                 else "（先消除 BLOCK 项再合入）" if verdict == "BLOCK"
                 else "（证据不足，补齐 --junit / --jacoco + --base 后重跑；UNPROVEN ≠ PASS）"))
     L.append("")
-    L.append("> BLOCK 处置路径：改 spec / 改 code / 改 SoT → 重跑 `sct.codegen` → `sct.check` → `sct.e2e`。")
+    L.append("> BLOCK 处置路径：改 spec / 改 code / 改 SoT → 重跑 `testing.cases` → `testing.run` → `testing.cases`。")
     return "\n".join(L), verdict
 
 
@@ -924,16 +924,16 @@ def preflight_api_tests(tests_root: Path, timeout: float) -> int:
         print("⚠️  [prereq] BASE_URL 设了 token 但服务不可达——可能是服务未启动、端口被挡、或环境不通。")
         print("    退出码 3 表示「接口测试缺前」，将作为工具结果反馈给 agent；")
         print("    在对话框确认是否：")
-        print("      a) 先修环境（启动服务/换 BASE_URL），再重跑 sct.check")
-        print("      b) 跳过接口层：`sct.check --skip-api-tests ...`")
+        print("      a) 先修环境（启动服务/换 BASE_URL），再重跑 testing.run")
+        print("      b) 跳过接口层：`testing.run --skip-api-tests ...`")
         return 3
     print()
     print("⚠️  [prereq] 接口测试缺前：")
     print(f"    - BASE_URL 不可达：{detail or '服务未监听'}")
     print("    - API_AUTH_TOKEN 未设")
     print("    在对话框确认输入：")
-    print("      1) 提供 token / 修环境后再跑：`export API_AUTH_TOKEN=...` 后重跑 sct.check")
-    print("      2) 跳过接口层：`sct.check --skip-api-tests ...`")
+    print("      1) 提供 token / 修环境后再跑：`export API_AUTH_TOKEN=...` 后重跑 testing.run")
+    print("      2) 跳过接口层：`testing.run --skip-api-tests ...`")
     return 3
 
 

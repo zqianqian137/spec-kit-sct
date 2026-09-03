@@ -1,5 +1,5 @@
 # =====================================================================
-# SCT 测试报告产物模板（阶段 3：speckit.sct.check）
+# SCT 测试报告产物模板（阶段 3：speckit.testing.run）
 # ---------------------------------------------------------------------
 # 生成器：consistency-check.py（--report 输出，--jacoco/--junit 注入数据）
 # 落盘位置：specs/{feature}/reports/test-report.md
@@ -169,4 +169,4 @@
 - 系统级异常清单: {n} 个（见 6.3，供人工审查）
 - **最终结论**: ✅ PASS（可合入）/ ❌ FAIL（先消除 HIGH 漂移与 P0 失败再合入）
 
-> FAIL 处置路径：改 spec / 改 code / 改 SoT → 重跑 `sct.codegen` → `sct.check` → `sct.e2e`。
+> FAIL 处置路径：改 spec / 改 code / 改 SoT → 重跑 `testing.cases` → `testing.run` → `testing.cases`。

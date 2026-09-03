@@ -2,7 +2,7 @@
 
 > **使用说明**：这是 SCT 项目里的占位模板，用于承载**您所在团队/银行**的单测编写规范。
 > 把下面每个 `[填入…]` 占位符替换为你们行的硬性要求即可。
-> 拷过去之后，建议与 CI 门禁（`sct.check` 的覆盖率/漂移门禁）和 Sonar/SpotBugs 等工具对齐——规则要能被机器校验，否则是纸面规范。
+> 拷过去之后，建议与 CI 门禁（`testing.run` 的覆盖率/漂移门禁）和 Sonar/SpotBugs 等工具对齐——规则要能被机器校验，否则是纸面规范。
 
 ---
 
@@ -90,7 +90,7 @@ void methodName_ShouldX_WhenY() {
 - [ ] 空集合 / null 入参（视业务而定）
 - [ ] [其他：权限/并发/幂等等]
 
-## 7. 覆盖率门槛（与 `sct.check` 对齐）
+## 7. 覆盖率门槛（与 `testing.run` 对齐）
 
 | 指标 | 阈值 | 数据来源 |
 |---|---|---|
@@ -113,13 +113,13 @@ void methodName_ShouldX_WhenY() {
 
 - 每条单测**必须能追溯到 SoT 一条规则**：`test_cases.name` 暗示的 rule id 在 `@DisplayName` 开头出现（如 `"BR-001: ..."`）
 - SoT `test_cases.inputs` 决定 Arrange 输入值；SoT `test_cases.expect` 决定 Assert；`given` 决定桩
-- **新规则**：先在 SoT 写好 `target` + `test_cases` + `given` + `checks`，再跑 `sct.codegen`，**不**允许跳过 SoT 直接手写测试
-- 已有测试改业务逻辑时：先改 SoT → `sct.codegen` → 对比 diff → 调整（**不是**手改生成的测试）
+- **新规则**：先在 SoT 写好 `target` + `test_cases` + `given` + `checks`，再跑 `testing.cases`，**不**允许跳过 SoT 直接手写测试
+- 已有测试改业务逻辑时：先改 SoT → `testing.cases` → 对比 diff → 调整（**不是**手改生成的测试）
 
 ## 10. CI / Gate
 
 - 本地不通过的单测**禁止**提交（`mvn test` / `gradle test` 必须绿）
-- 提交触发 `[Jenkins / GitLab CI / 其他]` 的 `[阶段名]` 阶段跑 `sct.check`，未达门禁阻塞 merge
+- 提交触发 `[Jenkins / GitLab CI / 其他]` 的 `[阶段名]` 阶段跑 `testing.run`，未达门禁阻塞 merge
 - 覆盖率降级不允许（[实施日期 X] 起硬门禁）
 
 ---
@@ -128,7 +128,7 @@ void methodName_ShouldX_WhenY() {
 
 1. 把这份文档 commit 到 `spec-kit-sct/docs/unit-test-standards.md`（或您银行的内部仓库）
 2. 在项目 README / 新人指引里指向它
-3. 把第 7 节阈值写进 `sct.check` 的门禁校验（或 CI 脚本里另加一层）
+3. 把第 7 节阈值写进 `testing.run` 的门禁校验（或 CI 脚本里另加一层）
 4. 在培训里以"先写 SoT、再生成测试"为示范流程
 
 ---

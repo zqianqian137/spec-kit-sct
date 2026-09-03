@@ -3,8 +3,8 @@ schema_version: "1.0"
 extension:
   id: sct
   name: "Spec-Code-Test Consistency (SCT)"
-  version: "1.2.0"
-  description: "Speckit extension implementing the SCT methodology: a single source of truth (acceptance.yaml), auto-generated write-once tests, three-way spec↔code↔test consistency checks, test-effectiveness verification, and change-impact / tier-gated workflows."
+  version: "1.3.0"
+  description: "Test-domain extension for Spec Kit: auto-generate a test plan from spec + plan artifacts, derive write-once tests across unit / interface (protocol-agnostic) / e2e (scenario cases), and gate every change on hard evidence (coverage ≥90%, cases 100% passing, no missing coverage) with a human-reviewable report."
   author: zqianqian137
   repository: https://github.com/zqianqian137/spec-kit-sct
   homepage: https://github.com/zqianqian137/spec-kit-sct
@@ -19,45 +19,36 @@ requires:
   speckit_version: ">=0.9.0"
   tools:
     # Optional soft dependency: when the codebase-memory-mcp connector is connected,
-    # sct.impact enriches the reverse trace (call-chain / DTO resolution) via semantic
-    # code search. The extension works without it (falls back to ripgrep static scan).
+    # testing.plan's impact step enriches the reverse trace (call-chain / DTO
+    # resolution) via semantic code search. Works without it (falls back to ripgrep).
     - name: codebase-memory-mcp
       required: false
       description: "Optional code knowledge graph for enriched change-impact reverse tracing."
 
 provides:
   commands:
-    # ====== 5 core commands (SCT main pipeline + AI innovation) ======
-    - name: speckit.sct.merge
-      file: commands/speckit.sct.merge.md
-      description: "Merge spec/plan/data-model/api-contracts into acceptance.yaml (single source of truth). Supports --ai for LLM auto-extraction of acceptance scenarios."
-    - name: speckit.sct.codegen
-      file: commands/speckit.sct.codegen.md
-      description: "Derive unit/e2e tests from acceptance.yaml. Tests are write-once (manual edits disallowed)."
-    - name: speckit.sct.check
-      file: commands/speckit.sct.check.md
-      description: "Three-way consistency check: spec <-> code <-> test. Supports --ai for LLM semantic (soft-drift) analysis."
-    - name: speckit.sct.impact
-      file: commands/speckit.sct.impact.md
-      description: "Reverse-trace code changes to affected spec scenarios. Outputs change-impact.md with P0/P1/P2 and a L1/L2/L3 tier decision."
-    - name: speckit.sct.e2e
-      file: commands/speckit.sct.e2e.md
-      description: "Bridge change-impact.md + acceptance.yaml into Playwright e2e auto-regression scripts."
-    - name: speckit.sct.verify
-      file: commands/speckit.sct.verify.md
-      description: "Test-effectiveness gate with honest three-state output (PASS/BLOCK/UNPROVEN): phantom task detection, real compile, real executed test count, optional mutation score. Answers whether tests actually catch bugs."
+    # ====== 3 commands: testing.plan → testing.cases → testing.run ======
+    - name: speckit.testing.plan
+      file: commands/speckit.testing.plan.md
+      description: "Auto-generate the test plan (acceptance.yaml) from spec.md + plan artifacts (plan/data-model/api-contracts); optional change-impact tiering (P0/P1/P2 + L1/L2/L3). Supports --ai for LLM extraction."
+    - name: speckit.testing.cases
+      file: commands/speckit.testing.cases.md
+      description: "Derive write-once test cases across three layers: unit (language-pluggable), interface (protocol-agnostic contracts), e2e (scenario cases only). Emits a sha256 manifest that enforces write-once."
+    - name: speckit.testing.run
+      file: commands/speckit.testing.run.md
+      description: "Execute derived tests, verify requirements are implemented, apply the hard gate (coverage ≥90%, cases 100% passing, no missing coverage) and write a human-reviewable report. Honest PASS/BLOCK/UNPROVEN; non-zero exit blocks the merge."
 
-  # NOTE: SCT is intentionally NON-INTRUSIVE. It provides the 6 `speckit.sct.*`
+  # NOTE: SCT is intentionally NON-INTRUSIVE. It provides the 3 `speckit.testing.*`
   # commands only; it does NOT register any lifecycle hooks, so the original
-  # `specify / plan / implement / constitution` flow is never altered or
-  # auto-extended. The 6 SCT commands are invoked manually by the user after
-  # implementation — the user decides, per change, whether and when to run each.
+  # `specify / plan / tasks / implement` flow is never altered or auto-extended.
+  # The commands are invoked manually — the user decides, per change, when to run each.
 
 tags:
   - "sct"
-  - "spec-code-test"
-  - "consistency"
+  - "testing"
+  - "test-plan"
   - "test-automation"
+  - "coverage-gate"
   - "ai-assisted"
   - "methodology"
   - "change-impact"

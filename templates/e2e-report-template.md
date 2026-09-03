@@ -1,5 +1,5 @@
 # =====================================================================
-# E2E 回归报告产物模板（SCT 阶段 5：speckit.sct.e2e）
+# E2E 回归报告产物模板（SCT 阶段 5：speckit.testing.cases）
 # ---------------------------------------------------------------------
 # 生成物：e2e/auto_generated/_summary.json（机器可读）+ 本报告（人类可读）
 # 生成器：change-impact-e2e-bridge.py（生成 spec.js），报告由 CI 执行后汇总
@@ -44,7 +44,7 @@
 + if (exists(task.getFileName())) { throw new ConflictException("duplicate fileName"); }
 ```
 
-- **处置**: 修复后重跑 `speckit.sct.check` → `speckit.sct.e2e`
+- **处置**: 修复后重跑 `speckit.testing.run` → `speckit.testing.cases`
 
 ## 4. 结论
 

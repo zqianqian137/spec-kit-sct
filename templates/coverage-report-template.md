@@ -1,5 +1,5 @@
 # =====================================================================
-# 覆盖率报告产物模板（SCT 阶段 2：speckit.sct.codegen）
+# 覆盖率报告产物模板（SCT 阶段 2：speckit.testing.cases）
 # ---------------------------------------------------------------------
 # 生成物：tests/generated/COVERAGE_REPORT.md
 # 生成器：acceptance-codegen.py（gen_coverage_report）

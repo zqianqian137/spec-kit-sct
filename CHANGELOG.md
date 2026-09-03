@@ -3,6 +3,40 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.3.0] - 2026-09-03
+
+### Changed — 命令体系精简 6 → 3（`speckit.sct.*` → `speckit.testing.*`）
+
+按"测试计划 → 测试案例 → 测试执行"三阶段重组命令，命名直接表达用途：
+
+| 旧命令 | 新命令 | 说明 |
+|---|---|---|
+| `sct.merge` + `sct.impact` | **`testing.plan`** | 测试计划 = 合并 + 变更影响定级 |
+| `sct.codegen` + `sct.e2e` | **`testing.cases`** | 测试案例 = 三层派生 + e2e 场景 |
+| `sct.check` + `sct.verify` | **`testing.run`** | 测试执行 = 门禁 + 报告 + 有效性验证 |
+
+- 删除 3 个命令文件（`speckit.sct.impact/e2e/verify.md`），能力通过参数与新命令文档暴露；
+  底层脚本不变（`spec-merge.py` / `change-impact.py` / `acceptance-codegen.py` /
+  `change-impact-e2e-bridge.py` / `consistency-check.py` / `verification-gate.py`）
+- `extension.yml` / `catalog-entry.json`：commands 6→3，description/tags 更新
+
+### Changed — 测试计划输入扩展到 plan 产物
+
+- `testing.plan` 明确从 **spec.md + plan.md + data-model.md + api-contracts.md** 自动生成，
+  不再是"只从需求派生"；位置明确为 `specify plan` 之后
+
+### Changed — 接口层协议无关
+
+- 接口层从"HTTP 接口测试"改为"契约测试（protocol-agnostic）"：测试计划声明*要验证什么*，
+  emitter 决定*怎么驱动*（默认 HTTP），不把 HTTP 写死进方法论与文档
+
+### Docs
+
+- 重写三个命令文件（`speckit.testing.{plan,cases,run}.md`）
+- README 命令表 6 行→3 行；快速开始按三阶段重排
+- 手册第四部分重组（4.1~4.3 主命令 + 4.4/4.5/4.7 标为"已并入"子步骤）
+- `SCT介绍材料.md` 同步三命令与协议无关表述
+
 ## [1.2.0] - 2026-09-03
 
 ### Changed — 方法论重构：从"一致性理论"回归"测试域扩展"

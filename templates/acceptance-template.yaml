@@ -1,5 +1,5 @@
 # =====================================================================
-# acceptance.yaml 产物模板（SCT 阶段 1：speckit.sct.merge）
+# acceptance.yaml 产物模板（SCT 阶段 1：speckit.testing.plan）
 # ---------------------------------------------------------------------
 # 本文件是 SoT（Single Source of Truth）的结构约定。
 # 由 spec-merge.py 从 spec.md / plan.md / data-model.md / api-contracts.md
@@ -25,7 +25,7 @@ _meta:
                                         #   SoT 范围内覆盖 100% + 增量行覆盖率 ≥ 80%）
   test_timing: post                     # 测试生成时序（SCT 正统时序 = 名字顺序 Spec→Code→Test）：
                                         # post=代码先行（默认：implement 期间不生成测试，
-                                        #   代码编写独占资源；实现完成后由 sct.check 补生成，
+                                        #   代码编写独占资源；实现完成后由 testing.run 补生成，
                                         #   此时代码定稿、CodeGraph 最新，一致性比对质量最高）
                                         # pre=测试先行（TDD 式变体，可选：实现前先落可执行
                                         #   断言作红灯护栏。前向保证链两档等价——保证来自

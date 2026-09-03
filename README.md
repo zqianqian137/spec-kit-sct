@@ -36,12 +36,12 @@ a machine-readable list of what must be tested, derived from `spec.md` /
 
 ```text
 spec.md (requirement truth, backbone-owned)
-    │  sct.merge
+    │  testing.plan
     ▼
 acceptance.yaml (test plan: rules, APIs, scenarios, expected outcomes)
-    │  sct.codegen
+    │  testing.cases
     ▼
-three layers of tests → sct.check → gate + report
+three layers of tests → testing.run → gate + report
 ```
 
 The relationship is **derived, never competing**: change the requirement in
@@ -119,22 +119,21 @@ in a given language.
 
 ## What it provides
 
-6 commands — non-intrusive (zero hooks, original flow untouched):
+**3 commands** — non-intrusive (zero hooks, original flow untouched):
 
 | Command | Purpose | Key artifact |
 |---------|---------|--------------|
-| `speckit.sct.merge` | Build `acceptance.yaml` (SoT) from spec / plan / data-model / api-contracts | `acceptance.yaml` |
-| `speckit.sct.codegen` | Derive unit + e2e tests from the SoT (write-once) | `tests/generated/*` |
-| `speckit.sct.check` | Three-way consistency check spec ↔ code ↔ test + human-review report | `test-report.md` |
-| `speckit.sct.impact` | Reverse-trace code changes → affected scenarios (P0/P1/P2) + L1/L2/L3 tier | `change-impact.md` |
-| `speckit.sct.e2e` | Bridge impact + SoT into Playwright auto-regression | `e2e/auto_generated/*` |
-| `speckit.sct.verify` | Test-effectiveness gate: phantom tasks, real compile, real executed tests, mutation score (PASS/BLOCK/UNPROVEN) | `verification.md` |
+| `speckit.testing.plan` | **Auto-generate the test plan** from `spec.md` + plan artifacts (`plan.md` / `data-model.md` / `api-contracts.md`); optional change-impact tiering (P0/P1/P2 + L1/L2/L3) | `acceptance.yaml`, `change-impact.md` |
+| `speckit.testing.cases` | **Derive write-once test cases** across three layers — unit (language-pluggable), interface (**protocol-agnostic**), e2e (**scenario cases only**) | `tests/generated/*`, `e2e/auto_generated/*` |
+| `speckit.testing.run` | **Execute + gate + report**: verify requirements are implemented, apply the hard gate (coverage ≥90%, 100% passing, no missing coverage), write a human-reviewable report | `test-report.md` |
 
 **Non-intrusive by design.** SCT registers **no lifecycle hooks** and never
-alters the original `specify / plan / implement / constitution` flow. The 6
-commands above are invoked **manually by the user**, after implementation — the
-user decides, per change, whether and when to run `merge` / `codegen` / `check`
-/ `impact` / `e2e` / `verify`.
+alters the original `specify / plan / tasks / implement` flow. The 3 commands
+above are invoked **manually by the user** — the user decides, per change,
+whether and when to run `plan` / `cases` / `run`.
+
+> Command naming: `speckit.testing.*` — the extension id stays `sct` (repo
+> identity), while the commands say what they are for.
 
 ## Installation
 
@@ -173,27 +172,25 @@ specify extension add --dev /path/to/spec-kit-sct
 ## Quick start
 
 ```bash
-# 1. 测试计划: derive the test contract from your spec artifacts
-specify sct.merge --spec specs/001/spec.md --out specs/001/acceptance.yaml
+# ① 测试计划 — auto-generated after `specify plan`, from spec + plan artifacts
+specify testing.plan --spec specs/001/spec.md --out specs/001/acceptance.yaml
+#   plan.md / data-model.md / api-contracts.md are consumed when present
 
-# 2. 测试案例: derive write-once tests
-specify sct.codegen --spec specs/001/acceptance.yaml --out tests/generated
+# ② 测试案例 — derive write-once cases (unit + interface + e2e scenarios)
+specify testing.cases --spec specs/001/acceptance.yaml --out tests/generated
 
-# 3. 测试执行 + 测试覆盖 (after implementation, nothing auto-fires):
-specify sct.impact            # optional: reverse-trace the change first
-specify sct.check --spec specs/001/acceptance.yaml --code backend/src/main/java --tests tests/generated
-
-# 4. Reverse-trace a change and (optionally) generate e2e regression
-specify sct.impact
-specify sct.e2e
-
-# 5. L2/L3: verify the tests actually catch bugs (honest three-state gate)
-specify sct.verify --spec specs/001/acceptance.yaml --code backend/src/main/java \
-  --tasks specs/001/tasks.md --surefire backend/target/surefire-reports
+# ③ 测试执行 + 门禁 + 报告 — after implementation; nothing auto-fires
+specify testing.run --spec specs/001/acceptance.yaml --code backend/src/main/java \
+  --tests tests/generated \
+  --junit tests/generated/junit-report.xml \
+  --jacoco backend/target/site/jacoco/jacoco.xml --base main \
+  --report specs/001/reports/test-report.md
 ```
 
-The `--ai` flag on `merge` and `check` requires `SILICONFLOW_API_KEY`
-(optional). When the `codebase-memory-mcp` connector is connected, `sct.impact`
+Exit code 0 = PASS · 1 = BLOCK · 2 = UNPROVEN. Anything other than 0 blocks the merge.
+
+The `--ai` flag on `testing.plan` and `testing.run` requires `SILICONFLOW_API_KEY`
+(optional). When the `codebase-memory-mcp` connector is connected, `testing.plan`
 enriches the reverse trace via semantic code search (otherwise it falls back to
 a ripgrep static scan).
 
@@ -230,7 +227,7 @@ pointer rather than a false green.
 
 ## Java unit tests — AAA pattern, signature-bound, SoT-anchored
 
-`speckit.sct.codegen` generates **executable JUnit unit tests** for business rules
+`speckit.testing.cases` generates **executable JUnit unit tests** for business rules
 that carry `target` + `test_cases` in the SoT. Generated tests follow the classic
 **AAA** structure with a `@DisplayName` intent annotation (JUnit 5):
 
@@ -300,7 +297,7 @@ fixes must trace back to the requirement — the test is the alarm, not the verd
 - Tests are **write-once**: change the SoT, then regenerate — do not hand-edit
   generated tests.
 - Brownfield incremental mode: set `_meta.coverage_mode: incremental` in the
-  SoT, or pass `--mode incremental` to `sct.check`.
+  SoT, or pass `--mode incremental` to `testing.run`.
 - A `codegraph.json` (schema in `templates/codegraph-template.json`) upgrades
   generated API tests from skeleton to near-executable (real examples, required
   fields, field-level `FIELD_DRIFT`); without it, pure-SoT generation is used.
