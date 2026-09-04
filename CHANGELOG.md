@@ -3,6 +3,36 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.0.0] - 2026-09-04
+
+### Changed — SCT 2.0 定位升级：Spec → Test → Evidence → Quality Gate
+
+一句话：**不追求"生成更多测试"，而是用最少的测试和最可信的证据，证明 Spec 被正确实现。**
+
+- 架构主线：`Spec Kit → Acceptance Contract → Test Design → Evidence → PASS/BLOCK/UNPROVEN`
+- 确立**三大不可妥协原则**并写入所有文档：① Oracle Independence（期望只来自 Spec/Contract）
+  ② Write-once + Integrity（不得反复改测试直到通过）③ PASS/BLOCK/UNPROVEN（证据不足不放行）
+
+### Changed — `testing.cases` → `testing.design`（测试设计 + 制定任务）
+
+- 命令语义升级：不再只是"派生测试"，而是**测试设计 + 制定任务**——把契约变成测试设计
+  （每层测什么、怎么测、哪些可执行、哪些需人工补），可调用项目 skill 池提升设计质量，再派生 write-once 案例
+- 命令文件重写：`speckit.testing.design.md`；README / 手册 / 介绍材料 / extension.yml / catalog 同步
+- 明确"测试计划生成后 → 立即 design；代码实现后 → run"的时序
+
+### Changed — 跳过开关统一命名
+
+- `--skip-rules` → `--skip-unit-tests`（统一为 `--skip-unit-tests` / `--skip-api-tests` 两层跳过）
+
+### Added — ROADMAP.md
+
+- 记录 2.0 八大优化方向（含状态）、三大特色、最小追踪链路（REQ→AC→TEST→EXECUTION→EVIDENCE）、
+  优先级建议（P0 = Contract + Traceability + Evidence + Gate）
+
+### Docs
+
+- README / 手册 / 介绍材料更新为 2.0 定位；命令表统一为 Plan / Design / Run 三命令
+
 ## [1.5.0] - 2026-09-03
 
 ### Removed — 代码减法：删掉两个"五目标之外"的功能（净删 214 行）

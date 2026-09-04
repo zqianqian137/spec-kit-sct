@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: sct
   name: "Spec-Code-Test Consistency (SCT)"
-  version: "1.5.0"
+  version: "2.0.0"
   description: "Test-domain extension for Spec Kit: auto-generate a test plan from spec + plan artifacts, derive write-once tests across unit / interface (protocol-agnostic) / e2e (scenario cases), and gate every change on hard evidence (coverage ≥90%, cases 100% passing, no missing coverage) with a human-reviewable report."
   author: zqianqian137
   repository: https://github.com/zqianqian137/spec-kit-sct
@@ -27,13 +27,13 @@ requires:
 
 provides:
   commands:
-    # ====== 3 commands: testing.plan → testing.cases → testing.run ======
+    # ====== 3 commands: testing.plan → testing.design → testing.run ======
     - name: speckit.testing.plan
       file: commands/speckit.testing.plan.md
       description: "Auto-generate the test plan (acceptance.yaml) from spec.md + plan artifacts (plan/data-model/api-contracts); optional change-impact tiering (P0/P1/P2 + L1/L2/L3). Supports --ai for LLM extraction."
-    - name: speckit.testing.cases
-      file: commands/speckit.testing.cases.md
-      description: "Derive write-once test cases across three layers: unit (language-pluggable), interface (protocol-agnostic contracts), e2e (scenario cases only). Emits a sha256 manifest that enforces write-once."
+    - name: speckit.testing.design
+      file: commands/speckit.testing.design.md
+      description: "Test design + task planning: turn the plan into a test design (unit / interface protocol-agnostic / e2e scenario cases), then derive write-once test cases. May consult a skill pool to raise design quality. Emits a sha256 manifest that enforces write-once."
     - name: speckit.testing.run
       file: commands/speckit.testing.run.md
       description: "Execute derived tests, verify requirements are implemented, apply the hard gate (coverage ≥90%, cases 100% passing, no missing coverage) and write a human-reviewable report. Honest PASS/BLOCK/UNPROVEN; non-zero exit blocks the merge."

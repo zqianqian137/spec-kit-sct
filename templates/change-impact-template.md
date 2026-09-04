@@ -59,7 +59,7 @@
 ## 🎯 Recommended E2E Scenarios
 
 > 每个场景均来自 SoT 的 acceptance_scenarios（given/when/then），
-> 供阶段 5（testing.cases）生成 Playwright 回归脚本。
+> 供阶段 5（testing.design）生成 Playwright 回归脚本。
 
 | Priority | Scenario | Given → When → Then | Match Rule |
 |----------|----------|---------------------|------------|

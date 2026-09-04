@@ -169,4 +169,4 @@
 - 系统级异常清单: {n} 个（见 6.3，供人工审查）
 - **最终结论**: ✅ PASS（可合入）/ ❌ FAIL（先消除 HIGH 漂移与 P0 失败再合入）
 
-> FAIL 处置路径：改 spec / 改 code / 改 SoT → 重跑 `testing.cases` → `testing.run` → `testing.cases`。
+> FAIL 处置路径：改 spec / 改 code / 改 SoT → 重跑 `testing.design` → `testing.run` → `testing.design`。

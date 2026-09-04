@@ -1,7 +1,7 @@
 # SCT 介绍材料
 
 > SCT = **S**pec-**C**ode-**T**est，spec-kit 的**测试域扩展**  
-> 版本：v1.2.0　适用：内网试点项目组 / 技术评审
+> 版本：v2.0.0　适用：内网试点项目组 / 技术评审
 
 ---
 
@@ -9,16 +9,28 @@
 
 一句话：
 
-> **spec-kit 管需求怎么定、怎么实现；SCT 管测试怎么测全、测过的有没有证据、能不能放行。**
+> **用最少的测试和最可信的证据，证明 Spec 被正确实现。**
 
-它**不改** spec-kit 的原有流程（specify → plan → tasks → implement 原样跑），  
-只在旁边补一条完整的测试链路：从需求派生测试计划，自动生成三层测试，跑完出可审核报告，最后用硬门禁决定是否放行。
+```text
+Spec Kit（需求）→ Acceptance Contract（契约）→ Test Design（测试设计）→ Evidence（证据）→ PASS/BLOCK/UNPROVEN
+```
+
+它**不改** spec-kit 的原有流程（specify → plan → tasks → implement 原样跑），
+只在旁边补一条测试域链路：从需求派生测试契约，做测试设计与制定任务，真实执行后用三态证据门判定放行。
+
+**三条不可妥协的原则**：
+
+| # | 原则 | 含义 |
+|---|---|---|
+| ① | **Oracle Independence** | 期望结果只来自 Spec/Contract，绝不来自 Code |
+| ② | **Write-once + Integrity** | 可以生成测试，但不能反复改测试直到通过 |
+| ③ | **PASS / BLOCK / UNPROVEN** | 证据不足不强行判定 PASS |
 
 **SCT 不做的三件事**（划清边界，避免误用）：
 
-1. 不造"第二个真相源"——`spec.md` 仍是需求来源，SCT 只从它派生**测试计划**；
-2. 不绑定语言——Java/JUnit 只是当前默认 adapter，测试计划格式与门禁与语言无关；
-3. 不自动改变原流程——3 个命令全部手动触发，跑不跑由人决定。
+1. 不造"第二个真相源"——`spec.md` 仍是需求来源，SCT 只从它派生**测试契约**；
+2. 不绑定语言——Java/JUnit 只是当前默认 adapter，契约格式与门禁与语言无关；
+3. 不做测试/性能/安全平台——3 个命令封顶，通过 Adapter 对接外部能力。
 
 ---
 
@@ -49,8 +61,9 @@ SCT 的全部目标就是这五条，每条都有对应的硬机制：
      spec.md + plan.md + data-model.md + api-contracts.md → acceptance.yaml
      （可选）变更影响定级 P0/P1/P2 + L1/L2/L3
 
-  ② 测试案例 testing.cases
-     从测试计划派生三层测试（write-once：改计划重生成，不手改测试）
+  ② 测试设计 testing.design
+     契约 → 测试设计 + 制定任务（可调用 skill 池提升设计质量）
+     派生三层测试（write-once：改契约重生成，不手改测试）
 
   ③ 测试执行 testing.run
      真实执行 + 门禁 + 出统一详尽报告
@@ -110,7 +123,7 @@ specify testing.plan --spec specs/001/spec.md --out specs/001/acceptance.yaml
 # ② 人工校正测试计划（断言值、异常码、验收场景——测试质量的关键投入点）
 
 # ③ 派生三层测试案例
-specify testing.cases --spec specs/001/acceptance.yaml --out tests/generated
+specify testing.design --spec specs/001/acceptance.yaml --out tests/generated
 
 # ④ 实现后执行 + 门禁 + 出报告
 specify testing.run --spec specs/001/acceptance.yaml \

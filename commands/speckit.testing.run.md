@@ -8,7 +8,7 @@ Run the derived tests, check the code actually implements what the plan declares
 apply the gate, and produce a report a human can review.
 
 ```
-testing.plan  →  testing.cases  →  testing.run
+testing.plan  →  testing.design  →  testing.run
                                     ├─ execute (unit + interface + e2e)
                                     ├─ gate    (PASS 0 / BLOCK 1 / UNPROVEN 2)
                                     └─ report  (requirement × code × test matrix)
@@ -18,7 +18,7 @@ testing.plan  →  testing.cases  →  testing.run
 
 | Check | Requirement |
 |---|---|
-| Tests derived | `tests/generated/` exists (see `testing.cases`) |
+| Tests derived | `tests/generated/` exists (see `testing.design`) |
 | Code root | `--code` points at the real source root (the directory where you see `com/...`) |
 | Evidence | `--junit` (execution results) and `--jacoco` + `--base` (coverage) — **without these the verdict is UNPROVEN, not PASS** |
 
@@ -99,10 +99,10 @@ The verdict is one line; the report is what a human reviews. It contains:
 | Signal | Broken link | Fix |
 |---|---|---|
 | `MISSING_IMPL` | plan → code | implement what the plan declares |
-| `MISSING_TEST` | plan → test | re-run `testing.cases` (never hand-write a test to silence it) |
+| `MISSING_TEST` | plan → test | re-run `testing.design` (never hand-write a test to silence it) |
 | `FIELD_DRIFT` / `BINDING_DRIFT` | plan ↔ code | reconcile which side is right, then regenerate |
 | `MISSING_INTENT` | test without intent | regenerate intent-carrying cases |
-| `ARTIFACT_INTEGRITY` | write-once violated | re-run `testing.cases --force` |
+| `ARTIFACT_INTEGRITY` | write-once violated | re-run `testing.design --force` |
 
 > The gate is a **confirmation gate, not a rescue net**. A pipeline that depends on
 > `testing.run` to catch what the forward flow should have prevented is a process

@@ -113,8 +113,8 @@ void methodName_ShouldX_WhenY() {
 
 - 每条单测**必须能追溯到 SoT 一条规则**：`test_cases.name` 暗示的 rule id 在 `@DisplayName` 开头出现（如 `"BR-001: ..."`）
 - SoT `test_cases.inputs` 决定 Arrange 输入值；SoT `test_cases.expect` 决定 Assert；`given` 决定桩
-- **新规则**：先在 SoT 写好 `target` + `test_cases` + `given` + `checks`，再跑 `testing.cases`，**不**允许跳过 SoT 直接手写测试
-- 已有测试改业务逻辑时：先改 SoT → `testing.cases` → 对比 diff → 调整（**不是**手改生成的测试）
+- **新规则**：先在 SoT 写好 `target` + `test_cases` + `given` + `checks`，再跑 `testing.design`，**不**允许跳过 SoT 直接手写测试
+- 已有测试改业务逻辑时：先改 SoT → `testing.design` → 对比 diff → 调整（**不是**手改生成的测试）
 
 ## 10. CI / Gate
 

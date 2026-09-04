@@ -39,7 +39,7 @@ import sct_ids
 from datetime import datetime
 
 # 生成器版本：写入 _codegen_meta.json，manifest 校验时若版本不符则强制再生成
-GENERATOR_VERSION = "1.5.0"
+GENERATOR_VERSION = "2.0.0"
 
 
 def sha256_file(path: Path) -> str:
@@ -1427,7 +1427,7 @@ def {func_name}():
     # TODO: assert the observable outcome
     # 说明：验收场景是端到端用户旅程，单测层（离线静态校验）不在此执行。
     # 状态建模（v1.1.3）：未绑定可执行 adapter = UNPROVEN（skip），不是 BLOCK（fail）。
-    # 场景的可执行验证由 API 层（test_api_*.py）与 E2E 层（testing.cases 生成的
+    # 场景的可执行验证由 API 层（test_api_*.py）与 E2E 层（testing.design 生成的
     # Playwright）承担；gap 明细见 _scenario_gaps.json。
     pytest.skip(
         f"UNPROVEN: 场景 {sc_id} 在单测层无可执行 adapter（用户旅程应经 API/E2E 触发）；"
@@ -1626,10 +1626,10 @@ def main():
     parser.add_argument("--only",
                         help="只生成指定 API 的接口测试（逗号分隔 API ID，如 API-001,API-003）；"
                              "规则/场景测试不受影响；定向生成不推进 hash 缓存")
-    parser.add_argument("--skip-rules", action="store_true",
-                        help="跳过 Java/规则测试（仅生成接口测试 + conftest；纯 API-only 项目用）")
+    parser.add_argument("--skip-unit-tests", action="store_true",
+                        help="跳过单测层（规则/Java 测试；仅生成接口测试 + conftest；纯 API-only 项目用）")
     parser.add_argument("--skip-api-tests", action="store_true",
-                        help="跳过接口测试（仅生成 Java/规则测试 + test_rules；纯库/工具项目用）")
+                        help="跳过接口测试层（仅生成单测 + test_rules；纯库/工具项目用）")
     parser.add_argument("--only-rules",
                         help="只生成指定 rule 的测试（逗号分隔 rule ID，如 BR-001,BR-002；"
                              "配合 --skip-api-tests 用于精准单测再生成")
@@ -1740,14 +1740,14 @@ def main():
     else:
         print(f"JUnit version (explicit): {junit_version}")
     rule_files, binding_drifts = ([], [])
-    if not args.skip_rules:
+    if not args.skip_unit_tests:
         rule_files, binding_drifts = gen_rule_tests(rules, out_dir, args.code, args.java_test_root, junit_version)
         for f in rule_files:
             print(f"  + {f}")
         if binding_drifts:
             print(f"⚠️  {len(binding_drifts)} 个绑定漂移（BINDING_DRIFT），详见 COVERAGE_REPORT.md（需人工裁决 SoT 还是代码）")
     else:
-        print("⏭️  --skip-rules：跳过规则测试生成")
+        print("⏭️  --skip-unit-tests：跳过单测层生成")
 
     api_files, field_drifts, api_annotations = ([], [], {})
     conftest_path = None

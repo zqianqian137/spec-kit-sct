@@ -5,7 +5,7 @@ description: "Testing plan: auto-generate the test plan (acceptance.yaml) from s
 # Testing Plan — Auto-generate the Test Plan
 
 Generate `acceptance.yaml` — **the test plan**: the file that later drives test
-derivation (`testing.cases`) and the gate (`testing.run`).
+derivation (`testing.design`) and the gate (`testing.run`).
 
 **It is auto-generated, and it runs after `speckit.plan`.** The plan is derived
 from requirement *and design* artifacts, not invented by hand:
@@ -74,7 +74,7 @@ python $SCT_EXT_HOME/scripts/change-impact.py \
 ```
 
 Outputs `change-impact.md` with **P0/P1/P2** priorities and an **L1/L2/L3** tier
-(小改 / 中改 / 大改) that decides how much downstream work `testing.cases` and
+(小改 / 中改 / 大改) that decides how much downstream work `testing.design` and
 `testing.run` do.
 
 ## Step 3 — Enrich and self-check (the step that decides plan quality)
@@ -111,8 +111,8 @@ Then state the rule that governs everything downstream:
 
 > **Expectations live in the test plan, never in the tests.** Assertions are never
 > reverse-engineered from code. Tests are **write-once**: change the plan and
-> regenerate (`testing.cases`) — never hand-edit a generated test.
+> regenerate (`testing.design`) — never hand-edit a generated test.
 
-Next: `testing.cases` (derive tests) → `testing.run` (execute + gate + report).
+Next: `testing.design` (derive tests) → `testing.run` (execute + gate + report).
 
 This command is **manual**: no lifecycle hooks, nothing fires automatically.

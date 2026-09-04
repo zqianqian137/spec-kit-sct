@@ -335,7 +335,7 @@ def evaluate_gates(issues: List[dict], junit: Dict[str, str] | None,
     expected = (codegen_meta or {}).get("expected_outputs") or []
     if not expected:
         gates.append({"id": "GENERATED_ARTIFACT_INTEGRITY", "verdict": "UNPROVEN",
-                      "detail": "无 write-once manifest（旧版生成），重跑 testing.cases 后本项可验证"})
+                      "detail": "无 write-once manifest（旧版生成），重跑 testing.design 后本项可验证"})
     elif tests_root is not None:
         import hashlib as _hl
         problems = []
@@ -349,7 +349,7 @@ def evaluate_gates(issues: List[dict], junit: Dict[str, str] | None,
             gates.append({"id": "GENERATED_ARTIFACT_INTEGRITY", "verdict": "BLOCK",
                           "detail": f"生成测试被改动/缺失 {len(problems)} 处（{'；'.join(problems[:3])}"
                                     f"{'…' if len(problems) > 3 else ''}）——write-once 纪律被破坏，"
-                                    f"重跑 testing.cases --force 恢复"})
+                                    f"重跑 testing.design --force 恢复"})
         else:
             gates.append({"id": "GENERATED_ARTIFACT_INTEGRITY", "verdict": "PASS",
                           "detail": f"{len(expected)} 个生成文件 hash 全部一致"})
@@ -846,7 +846,7 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
                 else "（先消除 BLOCK 项再合入）" if verdict == "BLOCK"
                 else "（证据不足，补齐 --junit / --jacoco + --base 后重跑；UNPROVEN ≠ PASS）"))
     L.append("")
-    L.append("> BLOCK 处置路径：改 spec / 改 code / 改 SoT → 重跑 `testing.cases` → `testing.run` → `testing.cases`。")
+    L.append("> BLOCK 处置路径：改 spec / 改 code / 改 SoT → 重跑 `testing.design` → `testing.run` → `testing.design`。")
     return "\n".join(L), verdict
 
 

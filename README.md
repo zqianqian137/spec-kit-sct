@@ -1,17 +1,36 @@
 # SCT — Spec-Code-Test Consistency (Speckit Extension)
 
-A [Spec Kit](https://github.com/github/spec-kit) extension that implements the  
-**SCT methodology**: an independent **test flow** (测试计划 → 测试案例 → 测试执行  
-→ 测试覆盖) that hangs off the untouched Spec Kit backbone. Test expectations  
-are derived from a machine-readable test contract, tests are write-once, and  
-every change is gated on three-state evidence — so quality is *built in* by the  
-forward chain (spec → code → test), not patched on afterward.
+> **SCT 2.0 一句话：不追求"生成更多测试"，而是用最少的测试和最可信的证据，证明 Spec 被正确实现。**
 
-> 中文简介：SCT 是一条独立于 spec-kit 主骨架的**测试流**——主骨架  
-> （specify→plan→tasks→implement）不动，`spec.md` 仍是需求真相源；SCT 从它  
-> 派生测试契约 `acceptance.yaml`，机械派生 write-once 测试，再用三态证据门  
-> （PASS/BLOCK/UNPROVEN）确认测试执行、覆盖与有效性。面向内网/离线环境设计：  
-> 确定性脚本优先，模型只辅助、不作判决。
+A [Spec Kit](https://github.com/github/spec-kit) extension that turns the
+requirement into a **quality gate** through a minimal evidence chain:
+
+```text
+Spec Kit (需求，骨架所有)
+   ↓
+Acceptance Contract (acceptance.yaml：需求与测试之间的标准契约)
+   ↓
+Test Design   (testing.design：测试设计 + 制定任务)
+   ↓
+Evidence      (testing.run：执行结果 + 覆盖 + 缺陷 + 漂移)
+   ↓
+PASS / BLOCK / UNPROVEN (质量门禁)
+```
+
+Three non-negotiable principles hold the chain honest:
+
+| # | 原则 | 含义 |
+|---|---|---|
+| ① | **Oracle Independence** | 期望结果只来自 Spec/Contract，**绝不来自 Code**（反推断言 = 自己出题自己改卷） |
+| ② | **Write-once + Integrity** | 可以生成测试，但**不能反复改测试直到通过**（sha256 manifest 强制） |
+| ③ | **PASS / BLOCK / UNPROVEN** | 证据不足不强行判定 PASS（`UNPROVEN ≠ PASS`） |
+
+> 中文简介：SCT 是 spec-kit 主骨架之外的**测试域扩展**——从 `spec.md` 派生测试契约
+> `acceptance.yaml`，`testing.design` 做测试设计与制定任务（可调用 skill 池提升设计质量），
+> `testing.run` 真实执行并用三态证据门（PASS/BLOCK/UNPROVEN）判定放行。面向内网/离线环境：
+> 确定性脚本优先，AI 只辅助分析/生成/建议，最终判定永远由确定性引擎给出。
+
+详细路线图见 [ROADMAP.md](./ROADMAP.md)。
 
 ## Methodology
 
@@ -39,7 +58,7 @@ spec.md (requirement truth, backbone-owned)
     │  testing.plan
     ▼
 acceptance.yaml (test plan: rules, APIs, scenarios, expected outcomes)
-    │  testing.cases
+    │  testing.design
     ▼
 three layers of tests → testing.run → gate + report
 ```
@@ -123,7 +142,7 @@ in a given language.
 | Command                 | Purpose                                                                                                                                                                                                                          | Key artifact                                |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
 | `speckit.testing.plan`  | **Auto-generate the test plan** from `spec.md` + plan artifacts (`plan.md` / `data-model.md` / `api-contracts.md`); optional change-impact tiering (P0/P1/P2 + L1/L2/L3)                                                         | `acceptance.yaml`, `change-impact.md`       |
-| `speckit.testing.cases` | **Derive write-once test cases** across three layers — unit (language-pluggable), interface (**protocol-agnostic**), e2e (**scenario cases only**)                                                                               | `tests/generated/*`, `e2e/auto_generated/*` |
+| `speckit.testing.design` | **Test design + task planning**: turn the plan into a test design, then derive write-once cases across three layers — unit (language-pluggable), interface (**protocol-agnostic**), e2e (**scenario cases only**). May consult a skill pool to raise design quality | `tests/generated/*`, `e2e/auto_generated/*` |
 | `speckit.testing.run`   | **Execute + gate + report**: verify requirements are implemented, apply the hard gate (coverage ≥90%, 100% passing, no missing coverage), write a unified report (unit + interface + coverage + defects + drift + change impact) | `test-report.md`                            |
 
 **Mostly non-intrusive, one opt-in hook.** SCT never alters the original  
@@ -158,7 +177,7 @@ for a human reviewer:
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v1.5.0.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.0.0.zip
 ```
 
 Or install from a local checkout during development:
@@ -193,7 +212,7 @@ specify testing.plan --spec specs/001/spec.md --out specs/001/acceptance.yaml
 #   plan.md / data-model.md / api-contracts.md are consumed when present
 
 # ② 测试案例 — derive write-once cases (unit + interface + e2e scenarios)
-specify testing.cases --spec specs/001/acceptance.yaml --out tests/generated
+specify testing.design --spec specs/001/acceptance.yaml --out tests/generated
 
 # ③ 测试执行 + 门禁 + 报告 — after implementation; nothing auto-fires
 specify testing.run --spec specs/001/acceptance.yaml --code backend/src/main/java \
@@ -243,11 +262,11 @@ pointer rather than a false green.
 
 ## Java unit tests — AAA pattern, signature-bound, SoT-anchored
 
-`speckit.testing.cases` generates **executable JUnit unit tests** for business rules  
+`speckit.testing.design` generates **executable JUnit unit tests** for business rules  
 that carry `target` + `test_cases` in the SoT. Generated tests follow the classic  
 **AAA** structure with a `@DisplayName` intent annotation (JUnit 5):
 
-增加测试计划生成立马也是测试design，代码实现之后测试执行，也可以--skip-api-tests --skip-unit-tests ...，测试cases，\`speckit.testing.cases\`改为\`speckit.testing.design\`  
+增加测试计划生成立马也是测试design，代码实现之后测试执行，也可以--skip-api-tests --skip-unit-tests ...，测试cases，\`speckit.testing.design\`改为\`speckit.testing.design\`  
 也等于测试设计和制定任务（可以调用项组ga专用的skill池提高测试设计质量），便于后面的执行，\`speckit.testing.run\`
 
 How the three JUnit parts are sourced — so the test is **not biased by the code**:
