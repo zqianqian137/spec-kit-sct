@@ -3,6 +3,62 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.2.0] - 2026-09-04
+
+### Changed — 定位收敛：从 Test Extension 到 Verification Kernel
+
+一句话：**SCT 不生产测试，它生产可裁决的证据。**
+
+- **内核边界明确**：SCT 只自有三件事 —— **Evidence Contract**（`acceptance.yaml` + Schema + `--profile`）、
+  **Traceability**（`REQ → AC → TEST → EXECUTION → EVIDENCE` + write-once manifest）、
+  **Gate**（四维证据 → PASS/BLOCK/UNPROVEN，退出码 0/1/2）。
+  测试生成 / JUnit / HTTP / E2E / Golden / BDD 全部归 **Adapter**，通过 `Evidence Record`
+  接口回传证据，**裁决权不下放**
+- 新增 `docs/verification-kernel.md`：Kernel/Adapter 边界、`Evidence Record` 接口、
+  「什么进内核」三问判定规则（Q1 放行 / Q2 期望 / Q3 证据产生）、与社区扩展
+  （SpecTest / Golden Demo / Evaluator Contract / CI Guard）的接入关系、反模式与自检清单
+- README / ROADMAP / extension.yml / catalog-entry.json 定位统一为 Verification Kernel
+- 本版是 **v3.0 方向的 Step 0**；adapter 接口代码化（Step 1-2）仍为设计预留，**未假装完成**
+
+> **命令名不变**：`speckit.testing.*` 三个命令保持不动。是否改为 `speckit.verify.*`
+> 留到 adapter 接口稳定后决策（ROADMAP 第七节 Step 4），改名成本与用户肌肉记忆都已纳入考量。
+
+### Added — `scripts/check-release-consistency.py`（发布前一致性自检）
+
+用 SCT 自己的三态门守 SCT 自己的发布，7 项检查每项独立判 PASS/BLOCK/UNPROVEN、整体取最严：
+
+`VERSION`（三处版本号 + README 安装链接）· `COMMANDS` · `HOOKS` · `DESCRIPTION`
+· `TAGS` · `LEGACY_CMD`（旧命令名残留，CHANGELOG 历史除外）· `PROFILE_DOC`（覆盖率口径硬编码）
+
+- 零硬依赖：`pyyaml` 缺失时降级为 **UNPROVEN**（不假装通过），符合 `UNPROVEN ≠ PASS`
+- 用法：`python scripts/check-release-consistency.py [root1] [root2] ...`
+- 首跑即抓到一个自检 bug 并修复：**无 pyyaml 降级路径把命令数解析为 0 → 假 BLOCK**；
+  改为按 `commands:` 实际缩进解析；扫描边界补充「不扫入嵌套 git 仓库」（别人的地盘不归本扩展管）
+
+### Fixed — 发布前一致性 cleanup（10 → 14 项）
+
+| # | 问题 | 修复 |
+|---|---|---|
+| 1 | 工作区根目录是 **v1.1.2 陈旧快照**（6 个 `speckit.sct.*`，引用的 `commands/*.md` 根本不存在） | 根目录 README / extension.yml / catalog-entry.json 对齐 v2.x 真源 |
+| 2 | README 残留旧命令名 `check` / `codegen` / `sct.*` 与 "the 6 commands are manual by design" | 全部更正为 `testing.design` / `testing.run` 与 3 命令 |
+| 3 | README 称 "zero hooks"，但 extension.yml 声明了 `after_plan` hook | 改为「3 commands + 1 optional hook」，并说明 hook 只*建议*生成测试计划 |
+| 4 | README 一处未整理的编辑草稿混入正文章节 | 删除，改写为正式的「时序（重要）」说明（计划→立即 design→编码→run） |
+| 5 | `catalog-entry.json` 写 `"hooks": 0`，与 extension.yml 的 1 个 hook 不符 | 改为 `1` |
+| 6 | README 通篇硬编码「coverage ≥ 90%」，代码已支持 `--profile fast/standard/strict` | 门禁章节改为 profile 驱动，补三档阈值表（70/90/95） |
+| 7 | 术语 `SoT` 在 v1.2.0 已正名为「测试计划（test plan）」，两节未跟上（14 处） | 全文统一为 test plan / contract-anchored |
+| 8 | `extension.yml` 与 `catalog-entry.json` 描述与 tags 不一致（"scenario cases" vs "…only"；catalog 缺 `ai-assisted`/`methodology`） | 两处 description 与 tags 完全对齐 |
+| 9 | `spec-kit-sct/`（发布包）与 `spec-kit-main/extensions/sct/`（仓库副本）**内容分叉**：<br>commands/ 三个命令文件、templates/ 六个模板均落后一版；文档集互有缺失 | 以 `spec-kit-sct`（09-04 09:27，较新）为准全量同步，两处文件集与内容完全一致 |
+| 10 | README 引用 `./ROADMAP.md`，但发布包内无此文件 | ROADMAP.md 纳入发布包，补齐文档集 |
+| 11 | 各文档门禁表 gate id 停在 **v1.1.3**（`NO_MISSING` / `TEST_EXECUTION` / `ARTIFACT_INTEGRITY`…），<br>与 v2.1 代码里的四维 id（`REQUIREMENT_COVERAGE` / `EXECUTION_RESULT` / `EVIDENCE_COMPLETENESS` / `TEST_INTEGRITY`）不一致 | README / `testing.run` 命令文档 / 介绍材料 / 手册 / 报告模板统一为「维度 × 五证据项」表，与报告 §1 输出对齐 |
+| 12 | `testing.run` 命令描述与 extension.yml 仍写「coverage ≥90%」；介绍材料 / 手册多处硬编码 90% | 全部改为 profile 驱动口径（fast 70 / standard 90 / strict 95），命令文档补 `--profile` 参数说明 |
+| 13 | README「中文简介」与方法论首段仍自称 **test-domain extension / 测试域扩展** | 统一为「verification kernel（验证内核）」，与顶部 Kernel 定位一致 |
+| 14 | `docs/methodology-assessment.md` 停在 v2.1.0，与 Step 0「方法论统一 Kernel 叙事」宣称不符 | 追加第八节 v2.2.0 回访：收敛后三原则复核 + 第六节建议落地回访 + 风险更新 |
+
+> **遗留项（未处理，需人工决策）**：`spec-kit-main/presets/sct/` 仍存在
+> （`preset.yml` + 四个 override 命令），但 v1.1.2 已声明删除 preset 产物。
+> 另 `spec-kit-main/extensions/sct/scripts/python/{sct_hooks.py, run_sct_hooks.py}`
+> 为 v1.0.1 已声明删除的 dead code（全仓无引用）。二者位于上游仓库副本内，未擅自删除。
+
 ## [2.1.0] - 2026-09-04
 
 ### Added — P0 全部落地（Contract + Traceability + Evidence + Gate）

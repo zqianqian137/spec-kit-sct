@@ -3,8 +3,8 @@ schema_version: "1.0"
 extension:
   id: sct
   name: "Spec-Code-Test Consistency (SCT)"
-  version: "2.1.0"
-  description: "Test-domain extension for Spec Kit: auto-generate a test plan from spec + plan artifacts, derive write-once tests across unit / interface (protocol-agnostic) / e2e (scenario cases), and gate every change on hard evidence (coverage ≥90%, cases 100% passing, no missing coverage) with a human-reviewable report."
+  version: "2.2.0"
+  description: "Verification kernel for Spec Kit: owns the Evidence Contract (acceptance.yaml), the REQ->AC->TEST->EXECUTION->EVIDENCE traceability chain, and the deterministic PASS/BLOCK/UNPROVEN gate. Test generation (JUnit / HTTP / E2E / Golden / BDD) plugs in via adapters - the kernel produces the verdict, never the tests."
   author: zqianqian137
   repository: https://github.com/zqianqian137/spec-kit-sct
   homepage: https://github.com/zqianqian137/spec-kit-sct
@@ -36,7 +36,7 @@ provides:
       description: "Test design + task planning: turn the plan into a test design (unit / interface protocol-agnostic / e2e scenario cases), then derive write-once test cases. May consult a skill pool to raise design quality. Emits a sha256 manifest that enforces write-once."
     - name: speckit.testing.run
       file: commands/speckit.testing.run.md
-      description: "Execute derived tests, verify requirements are implemented, apply the hard gate (coverage ≥90%, cases 100% passing, no missing coverage) and write a human-reviewable report. Honest PASS/BLOCK/UNPROVEN; non-zero exit blocks the merge."
+      description: "Execute derived tests, verify requirements are implemented, apply the hard gate (coverage ≥ profile 阈值, cases 100% passing, no missing coverage) and write a human-reviewable report. Honest PASS/BLOCK/UNPROVEN; non-zero exit blocks the merge."
 
   # NOTE: SCT is intentionally NON-INTRUSIVE by default: it provides the 3
   # `speckit.testing.*` commands, and the single `after_plan` hook below is the
@@ -58,10 +58,12 @@ hooks:
 
 tags:
   - "sct"
+  - "verification"
+  - "verification-kernel"
+  - "evidence-contract"
+  - "traceability"
+  - "quality-gate"
   - "testing"
-  - "test-plan"
-  - "test-automation"
-  - "coverage-gate"
   - "ai-assisted"
   - "methodology"
   - "change-impact"

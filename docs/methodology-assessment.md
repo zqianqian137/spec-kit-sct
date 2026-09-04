@@ -70,3 +70,49 @@
 > SCT 2.1 的定位从"一个会生成测试的扩展"变成了"一个**用证据说话的质量门禁**"——
 > 判断标准已经站在正确的位置上（契约 + 证据 + 三态），剩下的主要是工程完整性
 > （adapter 化、命令级强制、CI 落地），不是方法论方向的错误。
+
+---
+
+## 八、v2.2.0 回访：Verification Kernel 收敛评估（2026-09-04）
+
+> 本文基线 v2.1.0；本回访记录 v2.2.0（= v3.0 方向的 **Step 0，文档层收敛**）发布时的复核。
+> 架构细节见 [`verification-kernel.md`](./verification-kernel.md)。
+
+### 8.1 收敛动作
+
+定位从「Test Extension」收敛为「**Verification Kernel**」：SCT 只自有 **Evidence Contract /
+Traceability / Gate** 三件事；测试生成（JUnit / HTTP / E2E / Golden / BDD）与覆盖率**采集**
+归 Adapter（`Evidence Record` 接口回传证据），CI 编排等归 Community Extension / 消费方。
+收敛解决"被当测试生成工具评估"的期望错位，并让社区 44 个测试扩展从竞品变上游 adapter。
+
+### 8.2 收敛后三原则核查（结论：不变）
+
+| 原则 | 收敛后是否仍被代码强制 |
+|---|---|
+| ① Oracle Independence | ✅ 契约格式 + Schema 仍在内核（Evidence Contract 不外包）；期望只来自 `acceptance.yaml`，adapter 只 `emit`/`collect` |
+| ② Write-once + Integrity | ✅ 无变化：manifest 校验在 Gate 的 `TEST_INTEGRITY` 内，与 adapter 无关 |
+| ③ PASS / BLOCK / UNPROVEN | ✅ 裁决仍在确定性引擎；收敛把「adapter 不得给 verdict、不得把 UNPROVEN 升 PASS」写成明文的 adapter 红线 |
+
+### 8.3 第六节「给 2.2 的建议」落地回访（如实标注）
+
+| # | 建议 | v2.2.0 状态 | 去向 |
+|---|---|---|---|
+| 1 | 契约校验命令级前置 | ⏸ 未动（v2.2.0 只做文档层，代码零改动） | 2.3 |
+| 2 | Java adapter 化最小一步（EMITTER 常量） | ⏸ 未动；仍为 Java 硬编码实现事实，Step 2 已规划进 v3.0 | 2.3 |
+| 3 | 追溯矩阵 JSON 导出（--trace-json） | ⏸ 未动 | 2.3 |
+| 4 | self-test 更多反例 | ✅ v2.1.0 已含 golden / blocker / gate 三档，继续有效 | — |
+
+### 8.4 风险清单更新
+
+- **风险 2（契约校验脚本级接入）**与 adapter 化相互纠缠：一旦 `Evidence Record` 落地
+  （v3.0 Step 1），内核在 `collect` 入口做字段校验会成为**架构强制点**——adapter 想绕也绕不过，
+  风险 2 的一部分会被 Step 1 吸收。
+- 新增边界风险：**文档/叙事跑在代码前面**——v2.2.0 的 Kernel 边界是"宣言"，`Evidence Record`
+  与 adapters 目录尚未代码化。按 SCT 自己的规矩，其状态是 **UNPROVEN**，不假装完成；
+  2.3 的主线就是把宣言变成代码（Step 1-2）。
+
+### 8.5 一句话（v2.2.0）
+
+> 收敛先画对了**边界**（叙事 + 元数据 + 发布一致性自检），把「该自有的」与「该外包的」分开；
+> 代码层边界（`Evidence Record` / adapters 目录化）是 2.3 的工程主线。评估结论不因收敛而改变——
+> 方法论方向依然正确，且收窄后的内核（契约 + 追溯 + 裁决）更不可替代。

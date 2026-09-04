@@ -1,21 +1,45 @@
 # SCT — Spec-Code-Test Consistency (Speckit Extension)
 
-> **SCT 2.0 一句话：不追求"生成更多测试"，而是用最少的测试和最可信的证据，证明 Spec 被正确实现。**
+> **SCT 一句话：不追求"生成更多测试"，而是用最少的测试和最可信的证据，证明 Spec 被正确实现。**
+>
+> **SCT 是 Spec Kit 的验证内核（Verification Kernel）——它不生产测试，它生产可裁决的证据。**
 
 A [Spec Kit](https://github.com/github/spec-kit) extension that turns the
-requirement into a **quality gate** through a minimal evidence chain:
+requirement into a **quality gate** — and owns only the part that must never be
+outsourced: the *verdict*.
+
+## Verification Kernel — what SCT owns, and what it deliberately doesn't
+
+SCT is **not** a test-generation extension. Test generation is a solved,
+crowded space — and it is not where the hard problem is. The hard problem is:
+*given a pile of tests, can you prove the spec was implemented correctly?*
+That is a **verification** problem, and it is what SCT is built to answer.
+
+So SCT owns exactly three things — the **Kernel**:
+
+| Kernel component | Owns | Deliberately does NOT |
+|---|---|---|
+| **① Evidence Contract** | `acceptance.yaml` + JSON Schema + `--profile`；期望只能来自契约，**绝不来自代码** | 不生成测试代码 |
+| **② Traceability** | `REQ → AC → TEST → EXECUTION → EVIDENCE` 追溯矩阵 + write-once sha256 manifest | 不执行测试 |
+| **③ Gate** | 四维证据 → `PASS / BLOCK / UNPROVEN`，退出码 `0 / 1 / 2`，**确定性** | 不改测试、不让失败变绿 |
+
+Everything else is an **Adapter**. An adapter is allowed to *emit* tests and
+must *hand back* an `Evidence Record`; it is never allowed to decide the verdict.
 
 ```text
-Spec Kit (需求，骨架所有)
+Spec Kit（需求，骨架所有）
+   ↓  testing.plan
+Acceptance Contract（acceptance.yaml —— 证据契约，期望的唯一合法来源）
+   ↓  testing.design   ←── Adapter 接入点
+Test Design + write-once cases       (JUnit / HTTP / Playwright / Golden / BDD …)
+   ↓  testing.run      ←── Adapter 回传 Evidence Record
+Evidence（执行结果 + 覆盖 + 缺陷 + 漂移 + 追溯矩阵）
    ↓
-Acceptance Contract (acceptance.yaml：需求与测试之间的标准契约)
-   ↓
-Test Design   (testing.design：测试设计 + 制定任务)
-   ↓
-Evidence      (testing.run：执行结果 + 覆盖 + 缺陷 + 漂移)
-   ↓
-PASS / BLOCK / UNPROVEN (质量门禁)
+PASS / BLOCK / UNPROVEN（Quality Gate —— 确定性引擎裁决，AI 不参与）
 ```
+
+> 完整架构、Kernel↔Adapter 边界、「什么东西该进内核」的判定规则，见
+> [`docs/verification-kernel.md`](./docs/verification-kernel.md)。
 
 Three non-negotiable principles hold the chain honest:
 
@@ -25,18 +49,20 @@ Three non-negotiable principles hold the chain honest:
 | ② | **Write-once + Integrity** | 可以生成测试，但**不能反复改测试直到通过**（sha256 manifest 强制） |
 | ③ | **PASS / BLOCK / UNPROVEN** | 证据不足不强行判定 PASS（`UNPROVEN ≠ PASS`） |
 
-> 中文简介：SCT 是 spec-kit 主骨架之外的**测试域扩展**——从 `spec.md` 派生测试契约
-> `acceptance.yaml`，`testing.design` 做测试设计与制定任务（可调用 skill 池提升设计质量），
-> `testing.run` 真实执行并用三态证据门（PASS/BLOCK/UNPROVEN）判定放行。面向内网/离线环境：
+> 中文简介：SCT 是 spec-kit 主骨架之外的**验证内核（Verification Kernel）**——不生产测试，
+> 只自有三件事：**Evidence Contract**（`acceptance.yaml`，期望只来自契约）、**Traceability**
+> （追溯矩阵 + write-once manifest）、**Gate**（四维证据 → PASS/BLOCK/UNPROVEN 三态裁决）。
+> 测试生成（JUnit / HTTP / Playwright / Golden / BDD）通过 **Adapter** 接入。面向内网/离线环境：
 > 确定性脚本优先，AI 只辅助分析/生成/建议，最终判定永远由确定性引擎给出。
 
 详细路线图见 [ROADMAP.md](./ROADMAP.md)。
 
 ## Methodology
 
-SCT is a **test-domain extension for Spec Kit**. It does not replace the  
-backbone, invent a new source of truth, or dictate a language. It answers five  
-practical questions — the same five a test lead asks before a release.
+SCT is a **test-domain extension — the verification kernel for Spec Kit**.  
+It does not replace the backbone, invent a new source of truth, or dictate a  
+language. It answers five practical questions — the same five a test lead asks  
+before a release.
 
 | # | Question   | How SCT answers it                                                                   |
 | - | ---------- | ------------------------------------------------------------------------------------ |
@@ -44,7 +70,7 @@ practical questions — the same five a test lead asks before a release.
 | 2 | 需求都实现了？    | each requirement is checked against the code: declared-but-missing is a gate failure |
 | 3 | 报告能不能人工审核？ | one report: what was tested, what was not, and why — reviewable, and re-runnable     |
 | 4 | 测试手段齐不齐？   | three layers: **unit → API → e2e** (e2e = scenario cases only)                       |
-| 5 | 门禁硬不硬？     | **coverage ≥ 90%**, **cases 100% passing**, no missing coverage → merge blocked      |
+| 5 | 门禁硬不硬？     | **coverage ≥ profile 阈值**（standard = 90%）, **cases 100% passing**, no missing coverage → merge blocked |
 
 ### 1. Not another source of truth — a test plan derived from the spec
 
@@ -72,7 +98,7 @@ never the test file itself.
 
 `漏测` (missed coverage) is the failure SCT is primarily built to prevent, and  
 it is a **gate**, not a warning. For every item registered in the test plan,  
-`check` requires:
+`testing.run` requires:
 
 - an API contract → a test that exercises it (success **and** each declared error case)
 - a business rule → a test asserting it
@@ -83,13 +109,17 @@ the merge. Anything declared in the plan but absent from the code is reported as
 **MISSING_IMPL** and blocks the merge. Together these answer question 2: *has  
 the code actually implemented what the requirement asked?*
 
-### 3. Three layers — unit, API, e2e (scenarios only)
+### 3. Three layers — adapters, not kernel
 
-| Layer       | Derived from                  | Output                    | Notes                                                                          |
-| ----------- | ----------------------------- | ------------------------- | ------------------------------------------------------------------------------ |
-| **L1 unit** | `rules[]` + method signatures | language-native tests     | **language-agnostic** — Java/JUnit today via adapter; the emitter is pluggable |
-| **L2 API**  | `apis[]` + contracts          | executable HTTP tests     | success path + every declared error code                                       |
-| **L3 e2e**  | `acceptance_scenarios`        | Playwright scenario cases | **scenario cases only** — G/W/T, no DSL to learn                               |
+> 这三层是 **Adapter 层**，不是 Kernel。Kernel 不关心测试是用 JUnit 还是 pytest
+> 写的、接口是走 HTTP 还是 gRPC —— 它只要求每层回传符合 `Evidence Record`
+> 接口的执行证据。换掉某一层的 adapter，改变的是*证据怎么产生*，不是*谁裁决*。
+
+| Layer       | Default adapter  | Derived from                  | Output                    | Notes                                                                              |
+| ----------- | ---------------- | ----------------------------- | ------------------------- | ---------------------------------------------------------------------------------- |
+| **L1 unit** | `junit5` emitter | `rules[]` + method signatures | language-native tests     | **language-agnostic** — Java/JUnit is the default emitter; the emitter is pluggable |
+| **L2 API**  | `http` driver    | `apis[]` + contracts          | executable contract tests | **protocol-agnostic** — HTTP is the default driver, not a methodological assumption |
+| **L3 e2e**  | `playwright`     | `acceptance_scenarios`        | Playwright scenario cases | **scenario cases only** — G/W/T, no DSL to learn                                   |
 
 Two principles keep the layers honest:
 
@@ -100,16 +130,25 @@ Two principles keep the layers honest:
 - **Generated tests are write-once.** Change the test plan and regenerate.  
   Hand-editing is detected via a sha256 manifest and blocks the gate.
 
-### 4. The gate blocks — 90% coverage, 100% passing
+### 4. The gate blocks — profile-driven coverage, 100% passing
 
-`check` produces structured evidence and takes the strictest verdict:
+`testing.run` produces structured evidence and takes the strictest verdict:
 
-| Evidence             | PASS                                                 | BLOCK                 | UNPROVEN                     |
-| -------------------- | ---------------------------------------------------- | --------------------- | ---------------------------- |
-| `NO_MISSING`         | every plan item has a test **and** an implementation | any 漏测 / 未实现          | —                            |
-| `LINE_COVERAGE`      | ≥ **90%**                                            | below 90%             | no `--jacoco` + `--base`     |
-| `TEST_EXECUTION`     | all cases pass (100%)                                | any failure           | no `--junit` / zero executed |
-| `ARTIFACT_INTEGRITY` | generated files match their manifest                 | hand-edited / missing | legacy output                |
+| 维度 | Evidence | PASS | BLOCK | UNPROVEN |
+| --- | --- | --- | --- | --- |
+| 需求覆盖 | `REQUIREMENT_COVERAGE` | every plan item has a test **and** an implementation | any 漏测 / 未实现 | no traceable plan items |
+| 执行结果 | `EXECUTION_RESULT` | all cases pass (100%) | any failure | no `--junit` / zero executed |
+| 执行结果 | `LINE_COVERAGE` | incremental line coverage ≥ profile 阈值 | below 阈值 | no `--jacoco` + `--base` |
+| 证据完整性 | `EVIDENCE_COMPLETENESS` | execution + coverage evidence complete | — | missing `--junit` / `--jacoco` + `--base` |
+| 测试完整性 | `TEST_INTEGRITY` | generated files match their sha256 manifest, intent complete | hand-edited / missing; intent missing (standard/strict) | legacy output without manifest; intent missing (fast) |
+
+The coverage threshold is **not hardcoded** — it comes from a Quality Profile:
+
+| Profile                       | Coverage | Use when                                                        |
+| ----------------------------- | -------- | --------------------------------------------------------------- |
+| `--profile fast`              | ≥ **70%** | spike / draft branches, fast feedback                            |
+| `--profile standard` (default) | ≥ **90%** | the normal gate — this is the documented default                 |
+| `--profile strict`            | ≥ **95%** | release / regulated change; 意图缺失 (missing intent) 直接 BLOCK |
 
 Exit codes: **PASS 0 · BLOCK 1 · UNPROVEN 2** — missing evidence never  
 masquerades as green (`UNPROVEN ≠ PASS`). Anything other than 0 blocks the merge.
@@ -135,22 +174,25 @@ gate, and the report are language-independent, and the emitter is pluggable.
 The test plan describes *what* must be true; the adapter decides *how* to say it  
 in a given language.
 
+> 这其实是 Kernel / Adapter 切分的一个直接推论：**语言属于 adapter，裁决属于 kernel**。
+> 所以新增一门语言的支持，不需要动门禁、追溯矩阵和报告——只需要加一个 emitter。
+
 ## What it provides
 
-**3 commands** — non-intrusive (zero hooks, original flow untouched):
+**3 commands + 1 optional hook** — the original `specify / plan / tasks / implement` flow is never altered:
 
 | Command                 | Purpose                                                                                                                                                                                                                          | Key artifact                                |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
 | `speckit.testing.plan`  | **Auto-generate the test plan** from `spec.md` + plan artifacts (`plan.md` / `data-model.md` / `api-contracts.md`); optional change-impact tiering (P0/P1/P2 + L1/L2/L3)                                                         | `acceptance.yaml`, `change-impact.md`       |
 | `speckit.testing.design` | **Test design + task planning**: turn the plan into a test design, then derive write-once cases across three layers — unit (language-pluggable), interface (**protocol-agnostic**), e2e (**scenario cases only**). May consult a skill pool to raise design quality | `tests/generated/*`, `e2e/auto_generated/*` |
-| `speckit.testing.run`   | **Execute + gate + report**: verify requirements are implemented, apply the hard gate (coverage ≥90%, 100% passing, no missing coverage), write a unified report (unit + interface + coverage + defects + drift + change impact) | `test-report.md`                            |
+| `speckit.testing.run`   | **Execute + gate + report**: verify requirements are implemented, apply the hard gate (coverage ≥ profile 阈值, 100% passing, no missing coverage), write a unified report (unit + interface + coverage + defects + drift + change impact) | `test-report.md`                            |
 
 **Mostly non-intrusive, one opt-in hook.** SCT never alters the original  
 `specify / plan / tasks / implement` flow. It registers **one** optional  
 lifecycle hook — `after_plan` — which *suggests* auto-generating the test plan  
 right after `specify plan` (you can skip it; the generated plan is always  
 hand-enrichable). Everything else is **manual**: the user decides, per change,  
-whether and when to run `plan` / `cases` / `run`.
+whether and when to run `plan` / `design` / `run`.
 
 > Command naming: `speckit.testing.*` — the extension id stays `sct` (repo  
 > identity), while the commands say what they are for.
@@ -177,7 +219,7 @@ for a human reviewer:
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.1.0.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.2.0.zip
 ```
 
 Or install from a local checkout during development:
@@ -193,16 +235,18 @@ specify extension add --dev /path/to/spec-kit-sct
 
 - You want spec, code, and tests to stay consistent automatically as the project evolves.
 - You run brownfield / incremental work and only want to test what actually changed.
-- You want AI-assisted SoT extraction and semantic drift detection (`--ai` flags).
+- You want AI-assisted test-plan extraction and semantic drift detection (`--ai` flags).
+- You want the gate to be **honest**: no green without evidence (`UNPROVEN ≠ PASS`).
 
 ## When NOT to use it
 
 - You want the original Speckit flow to stay untouched AND want light  
-  overrides — install the extension only and manually run `sct.*` per change;  
-  there is no auto-attach preset in this release.
-- You expect SCT to auto-run inside your `plan`/`implement` flow — it does not;  
-  the 6 commands are manual by design, so you must invoke them yourself after  
-  implementation.
+  overrides — install the extension only and manually run `testing.*` per  
+  change; there is no auto-attach preset in this release.
+- You expect SCT to auto-run inside your `plan`/`implement` flow — it does not.  
+  Only the optional `after_plan` hook *suggests* generating the test plan;  
+  `design` and `run` are manual by design, so you must invoke them yourself  
+  after implementation.
 
 ## Quick start
 
@@ -232,9 +276,9 @@ a ripgrep static scan).
 ## Making rule tests truly executable (no more empty skeletons)
 
 `test_rules.py` is generated as an **offline static assertion** — it verifies that  
-every business rule registered in the SoT has a corresponding piece of evidence in  
+every business rule registered in the test plan has a corresponding piece of evidence in  
 the code (annotation / method / exception / constant), without starting any service.  
-To make a rule's assertion precise, add a `checks` list to the rule in your SoT  
+To make a rule's assertion precise, add a `checks` list to the rule in your test plan  
 (`acceptance.yaml` or an `--api-contracts` YAML):
 
 ```yaml
@@ -251,7 +295,7 @@ rules:
 ```
 
 `kind` may be `annotation` / `method` / `exception` / `constant` / `text`.  
-`codegen` receives the code root via `--code` (default `backend/src/main/java`);  
+`testing.design` receives the code root via `--code` (default `backend/src/main/java`);  
 you can also override at runtime with env `SCT_CODE_ROOT`.
 
 If a rule has **no `checks`**, codegen falls back to a best-effort loose text match;  
@@ -260,28 +304,31 @@ instead of being silently skipped. Acceptance scenarios are end-to-end journeys 
 are validated at the API / E2E layers, so `test_scenarios.py` fails with a clear  
 pointer rather than a false green.
 
-## Java unit tests — AAA pattern, signature-bound, SoT-anchored
+## Java unit tests — AAA pattern, signature-bound, contract-anchored
 
 `speckit.testing.design` generates **executable JUnit unit tests** for business rules  
-that carry `target` + `test_cases` in the SoT. Generated tests follow the classic  
+that carry `target` + `test_cases` in the test plan. Generated tests follow the classic  
 **AAA** structure with a `@DisplayName` intent annotation (JUnit 5):
 
-增加测试计划生成立马也是测试design，代码实现之后测试执行，也可以--skip-api-tests --skip-unit-tests ...，测试cases，\`speckit.testing.design\`改为\`speckit.testing.design\`  
-也等于测试设计和制定任务（可以调用项组ga专用的skill池提高测试设计质量），便于后面的执行，\`speckit.testing.run\`
+> **时序（重要）**：`specify plan` 产出计划 → 测试计划（`acceptance.yaml`）生成后
+> **立即** 跑 `testing.design`——做测试设计并制定任务（可调用项目组 skill 池提高设计质量），
+> 而不是等编码完再补设计；编码实现完成后，再跑 `testing.run` 执行 + 门禁 + 报告。
+> `testing.run` 支持按层跳过：`--skip-unit-tests` / `--skip-api-tests`
+> （纯库项目或纯接口项目按需只跑一层）。
 
 How the three JUnit parts are sourced — so the test is **not biased by the code**:
 
-- **Inputs (values)** come from `test_cases.inputs` in the SoT.
+- **Inputs (values)** come from `test_cases.inputs` in the test plan.
 - **Inputs (shape)** — parameter types / order — come from the **public signature**  
   of the target method, parsed at generation time when `--code` is passed. The  
-  generator binds SoT inputs to parameters by name (else position) and auto-detects  
+  generator binds the test plan's inputs to parameters by name (else position) and auto-detects  
   collaborators (constructor params + injected fields) to `@Mock` them — Spring is  
   **never** used (`@ExtendWith(MockitoExtension.class)` on JUnit 5,  
   `@RunWith(MockitoJUnitRunner.class)` on JUnit 4). It reads the signature, not the  
   method body, so it cannot reverse-engineer the assertion.
-- **Assertions / exceptions** come from `test_cases.expect` (SoT), never from the code.
+- **Assertions / exceptions** come from `test_cases.expect` (test plan), never from the code.
 
-**Mock stubs are SoT-anchored too.** When a rule depends on a collaborator, add a  
+**Mock stubs are contract-anchored too.** When a rule depends on a collaborator, add a  
 `given` list so the generator emits `when(...).thenReturn(...)` in Arrange; without it  
 the test would silently fail on the mock's default value:
 
@@ -295,11 +342,11 @@ test_cases:
     expect: { returns: 5 }
 ```
 
-**Divergence is a signal, not a verdict.** When the SoT and the code disagree, the  
+**Divergence is a signal, not a verdict.** When the test plan and the code disagree, the  
 generator emits a `BINDING_DRIFT` entry (also written to `_codegen_meta.json` and the  
 coverage report) instead of a confusing red:
 
-- `METHOD_NOT_FOUND` — the SoT target method was renamed / removed in code.
+- `METHOD_NOT_FOUND` — the `target` method declared in the test plan was renamed / removed in code.
 - `MISSING_INPUT` — a parameter has no value in `test_cases.inputs`.
 - `UNCONSTRUCTABLE_ARG` — a complex object / object list can't be auto-built (e.g.  
   `List<Case>`); the arg is set to `null` and the test fails honestly so a human fills  
@@ -307,7 +354,7 @@ coverage report) instead of a confusing red:
 - `MOCK_NOT_STUBBED` — a collaborator is mocked but no `given` stub was provided.
 
 When a generated test fails, **never silently edit it green**. Escalate to a human:  
-code is wrong → fix the code; SoT / test is wrong → fix the SoT and regenerate. Both  
+code is wrong → fix the code; test plan / test is wrong → fix the test plan and regenerate. Both  
 fixes must trace back to the requirement — the test is the alarm, not the verdict.
 
 > Generated `.java` files may carry **Chinese** `@DisplayName` / comments. Compile with  
@@ -317,13 +364,13 @@ fixes must trace back to the requirement — the test is the alarm, not the verd
 
 ## Notes
 
-- Tests are **write-once**: change the SoT, then regenerate — do not hand-edit  
+- Tests are **write-once**: change the test plan, then regenerate — do not hand-edit  
   generated tests.
 - Brownfield incremental mode: set `_meta.coverage_mode: incremental` in the  
-  SoT, or pass `--mode incremental` to `testing.run`.
+  test plan, or pass `--mode incremental` to `testing.run`.
 - A `codegraph.json` (schema in `templates/codegraph-template.json`) upgrades  
   generated API tests from skeleton to near-executable (real examples, required  
-  fields, field-level `FIELD_DRIFT`); without it, pure-SoT generation is used.
+  fields, field-level `FIELD_DRIFT`); without it, plan-only generation is used.
 
 ## License
 

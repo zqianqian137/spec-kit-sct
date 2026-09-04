@@ -1,5 +1,5 @@
 ---
-description: "Testing run: execute the derived tests, verify requirements are implemented, apply the hard gate (coverage ≥90%, cases 100% passing, no missing coverage) and write a human-reviewable report. Honest PASS/BLOCK/UNPROVEN"
+description: "Testing run: execute the derived tests, verify requirements are implemented, apply the hard gate (coverage ≥ profile 阈值, cases 100% passing, no missing coverage) and write a human-reviewable report. Honest PASS/BLOCK/UNPROVEN"
 ---
 
 # Testing Run — Execute, Gate, Report
@@ -49,6 +49,7 @@ python $SCT_EXT_HOME/scripts/consistency-check.py \
 # --module-src src/main/kotlin  module source path when not src/main/java
 # --skip-api-tests / --skip-rule-tests   skip a layer (its evidence becomes N/A)
 # --prereq-timeout 3.0          interface reachability pre-check timeout
+# --profile fast|standard|strict  coverage gate profile (default: standard=90%)
 ```
 
 ### Interface layer pre-check
@@ -61,12 +62,17 @@ environment, or re-run with `--skip-api-tests`.
 
 Four evidence items, each judged independently; the overall verdict is the strictest:
 
-| Evidence | PASS | BLOCK | UNPROVEN |
-|---|---|---|---|
-| `NO_MISSING` | every plan item has a test **and** an implementation | 漏测 (`MISSING_TEST`) / 未实现 (`MISSING_IMPL`) | — |
-| `LINE_COVERAGE` | incremental line coverage ≥ **90%** | < 90% | no `--jacoco` + `--base` |
-| `TEST_EXECUTION` | all cases pass (**100%**) | any failure/error | no `--junit` or zero executed |
-| `ARTIFACT_INTEGRITY` | generated files match their sha256 manifest | hand-edited / missing | legacy output without manifest |
+| 维度 | Evidence | PASS | BLOCK | UNPROVEN |
+|---|---|---|---|---|
+| 需求覆盖 | `REQUIREMENT_COVERAGE` | every plan item has a test **and** an implementation | 漏测 (`MISSING_TEST`) / 未实现 (`MISSING_IMPL`) | no traceable plan items |
+| 执行结果 | `EXECUTION_RESULT` | all cases pass (**100%**) | any failure/error | no `--junit` or zero executed |
+| 执行结果 | `LINE_COVERAGE` | incremental line coverage ≥ profile 阈值 | below 阈值 | no `--jacoco` + `--base` |
+| 证据完整性 | `EVIDENCE_COMPLETENESS` | execution + coverage evidence complete | — | missing `--junit` / `--jacoco` + `--base` |
+| 测试完整性 | `TEST_INTEGRITY` | generated files match their sha256 manifest, intent complete | hand-edited / missing; intent missing (standard/strict) | legacy output without manifest; intent missing (fast) |
+
+The coverage threshold comes from the **Quality Profile** (`--profile`), not a
+hardcoded number: `fast` 70% (draft/spike) · `standard` 90% (default) ·
+`strict` 95% (release; missing intent is BLOCK).
 
 **Exit codes: PASS 0 · BLOCK 1 · UNPROVEN 2.** Anything other than 0 blocks the merge.
 `UNPROVEN ≠ PASS` — missing evidence must never masquerade as green.
@@ -112,7 +118,7 @@ The verdict is one line; the report is what a human reviews. It contains:
 | `MISSING_TEST` | plan → test | re-run `testing.design` (never hand-write a test to silence it) |
 | `FIELD_DRIFT` / `BINDING_DRIFT` | plan ↔ code | reconcile which side is right, then regenerate |
 | `MISSING_INTENT` | test without intent | regenerate intent-carrying cases |
-| `ARTIFACT_INTEGRITY` | write-once violated | re-run `testing.design --force` |
+| `TEST_INTEGRITY` | write-once violated | re-run `testing.design --force` |
 
 > The gate is a **confirmation gate, not a rescue net**. A pipeline that depends on
 > `testing.run` to catch what the forward flow should have prevented is a process

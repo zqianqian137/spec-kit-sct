@@ -1,14 +1,14 @@
 {
   "name": "Spec-Code-Test Consistency (SCT)",
   "id": "sct",
-  "version": "2.1.0",
-  "description": "Test-domain extension for Spec Kit: auto-generate a test plan from spec + plan artifacts, derive write-once tests across unit / interface (protocol-agnostic) / e2e (scenario cases only), and gate every change on hard evidence (coverage ≥90%, cases 100% passing, no missing coverage) with a human-reviewable report.",
+  "version": "2.2.0",
+  "description": "Verification kernel for Spec Kit: owns the Evidence Contract (acceptance.yaml), the REQ->AC->TEST->EXECUTION->EVIDENCE traceability chain, and the deterministic PASS/BLOCK/UNPROVEN gate. Test generation (JUnit / HTTP / E2E / Golden / BDD) plugs in via adapters - the kernel produces the verdict, never the tests.",
   "author": "zqianqian137",
-  "download_url": "https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.1.0.zip",
+  "download_url": "https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.2.0.zip",
   "repository": "https://github.com/zqianqian137/spec-kit-sct",
   "homepage": "https://github.com/zqianqian137/spec-kit-sct",
-  "documentation": "https://github.com/zqianqian137/spec-kit-sct/blob/v2.1.0/README.md",
-  "changelog": "https://github.com/zqianqian137/spec-kit-sct/blob/v2.1.0/CHANGELOG.md",
+  "documentation": "https://github.com/zqianqian137/spec-kit-sct/blob/v2.2.0/README.md",
+  "changelog": "https://github.com/zqianqian137/spec-kit-sct/blob/v2.2.0/CHANGELOG.md",
   "license": "MIT",
   "category": "process",
   "effect": "read-write",
@@ -24,16 +24,20 @@
   },
   "provides": {
     "commands": 3,
-    "hooks": 0
+    "hooks": 1
   },
   "tags": [
     "sct",
+    "verification",
+    "verification-kernel",
+    "evidence-contract",
+    "traceability",
+    "quality-gate",
     "testing",
-    "test-plan",
-    "test-automation",
-    "coverage-gate",
+    "ai-assisted",
+    "methodology",
     "change-impact"
   ],
   "created_at": "2026-08-27T00:00:00Z",
-  "updated_at": "2026-09-04T12:00:00Z"
+  "updated_at": "2026-09-04T15:44:00Z"
 }

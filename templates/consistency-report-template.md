@@ -6,7 +6,8 @@
 # 定位：**人工审查核心产物** —— 审查者据此回答两个问题：
 #   Q1 测试是否测到了本次改动点？（第 5 节 改动点审查）
 #   Q2 业务逻辑是否被正确实现？（第 3/4 节 接口与规则执行情况）
-# 放行规则：存在 HIGH 漂移 或 P0 场景未覆盖/未通过 → FAIL，禁止合入。
+# 放行规则：四维证据项任一 BLOCK（漏测 / 未实现 / 用例失败 / 覆盖率不达标 / 手改生成文件）
+# → 阻断合入；证据不足时结论为 UNPROVEN（≠ PASS），补齐证据重跑。
 # =====================================================================
 
 # SCT 测试报告（一致性 × 覆盖率 × 执行情况）
@@ -22,18 +23,20 @@
 **Tool**: consistency-check.py
 
 > **增量模式（brownfield）**：存量项目不做全量补测。门禁 = SoT 范围内 API/规则覆盖
-> 100% + 增量行覆盖率 ≥ 80%；`UNSPEC_API` 不上报，全量覆盖率仅供参考。
+> 100% + 增量行覆盖率 ≥ profile 阈值（standard 档默认 90%，`--profile` 可调 fast 70% / strict 95%）；
+> `UNSPEC_API` 不上报，全量覆盖率仅供参考。
 
 ## 1. 执行摘要
 
-| 维度 | 结果 | 门禁 |
-|------|------|------|
-| 三方一致性 | {0 个 HIGH 漂移} | 无 HIGH |
-| 增量行覆盖率 | {85.2%} | ≥ 80% |
-| 接口测试执行 | {12/12 通过} | 全部通过 |
-| P0 改动点覆盖 | {4/4 已测且通过} | 100% |
-| 字段级漂移 (FIELD_DRIFT) | {2 个} | 建议 0（不阻塞放行） |
-| **总结论** | ✅ PASS / ❌ FAIL | — |
+| 维度 | 证据项 | 结果 | 门禁语义 |
+|------|--------|------|------|
+| 需求覆盖 | `REQUIREMENT_COVERAGE` | {0 漏测 / 0 未实现} | 全部有测试且已实现，否则 BLOCK |
+| 执行结果 | `EXECUTION_RESULT` | {12/12 通过} | 全部通过；有失败即 BLOCK；未执行 UNPROVEN |
+| 执行结果 | `LINE_COVERAGE` | {85.2%（standard 档 ≥90%）} | 低于 profile 阈值即 BLOCK |
+| 证据完整性 | `EVIDENCE_COMPLETENESS` | {junit + jacoco 齐备} | 缺 `--junit` / `--jacoco` 即 UNPROVEN |
+| 测试完整性 | `TEST_INTEGRITY` | {hash 一致，意图完整} | 手改/缺失/意图缺失即 BLOCK（fast 档意图缺失为 UNPROVEN） |
+| 字段级漂移 (FIELD_DRIFT) | — | {2 个} | 建议 0（不阻塞放行） |
+| **总结论** | **—** | ✅ PASS / ❌ BLOCK / ⚠️ UNPROVEN | 取全部证据项最严判定；非 0 即阻断 |
 
 ## 2. JaCoCo 代码覆盖率
 
@@ -163,10 +166,12 @@
 
 - HIGH 漂移: {n} 个
 - P0 改动点: {n}/{n} 已覆盖且通过
-- 增量行覆盖率: {x%}（门禁 ≥ 80%）
+- 增量行覆盖率: {x%}（门禁 ≥ profile 阈值，standard 档 90%）
 - 字段级漂移 (FIELD_DRIFT): {n} 个（见 6.2，不阻塞放行）
 - 派生异常用例: {n} 个（CodeGraph 约束/枚举/类型派生，见 3.2「其中派生异常」列）
 - 系统级异常清单: {n} 个（见 6.3，供人工审查）
-- **最终结论**: ✅ PASS（可合入）/ ❌ FAIL（先消除 HIGH 漂移与 P0 失败再合入）
+- **最终结论**: ✅ PASS（可合入）/ ❌ BLOCK（先消除漏测 / 未实现 / 失败 / 覆盖率不达标 / 手改再合入）/ ⚠️ UNPROVEN（补齐 `--junit` / `--jacoco` 证据重跑）
 
-> FAIL 处置路径：改 spec / 改 code / 改 SoT → 重跑 `testing.design` → `testing.run` → `testing.design`。
+> BLOCK 处置路径：先归因断掉的环节（漏测→`testing.design` 重生成；未实现→补实现；
+> 覆盖率→补用例；手改→`testing.design --force`）→ 重跑 `testing.run`。改契约（acceptance.yaml）
+> 需连带改 spec 后再 `testing.design` 重生成。

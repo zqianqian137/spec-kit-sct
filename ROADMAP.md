@@ -1,6 +1,8 @@
-# SCT 2.0 路线图
+# SCT 路线图（2.0 → 3.0）
 
 > SCT 2.0 一句话：**不追求"生成更多测试"，而是用最少的测试和最可信的证据，证明 Spec 被正确实现。**
+>
+> SCT 3.0 收敛方向：**从 Test Extension 收敛为 Verification Kernel** —— 见[第七节](#七v30从-test-extension-收敛为-verification-kernel)。
 
 ---
 
@@ -63,8 +65,9 @@ PASS / BLOCK / UNPROVEN (Quality Gate)
   零外部依赖。已捕获并修复 2 个真实缺陷（manifest 相对路径、Java 单测追溯误判）
 - **SoT 三层拆分**（generated / overrides / lock）：⏸ 设计预留——当前以「派生字段 vs 人工字段」分区 +
   write-once manifest 守卫；完整拆分为独立文件需配套迁移工具，标记为下个里程碑
-- **codegen adapter 化**（语言中立）：⏸ 设计预留——Java/JUnit 为默认 emitter，self-test 已固定 Java
-  测试路径约定；完整 adapter 接口 + 多语言接入需配套重构，标记为下个里程碑
+- **codegen adapter 化**（语言中立）：⏸ **已升级为 v3.0 主线**——见[第七节](#七v30从-test-extension-收敛为-verification-kernel)。
+  当前 Java/JUnit 为默认 emitter，self-test 已固定 Java 测试路径约定；
+  完整 adapter 接口（`Evidence Record` + `scripts/adapters/{junit5,http,playwright}/`）见 `docs/verification-kernel.md`
 - 跨平台 CI：内网无 CI 条件，以 `scripts/self-test.py` 替代（手动/定时可跑）
 
 ### P2 — 边界控制（✅ 已明确，写入方法论评估）
@@ -85,3 +88,45 @@ PASS / BLOCK / UNPROVEN (Quality Gate)
 | `speckit.testing.run` | 证据 + 门禁 | 真实执行 + 四维证据 + 三态门禁 + 统一报告 |
 
 > 关键约束：**三个命令封顶**，新能力通过参数/Adapter 扩展，不再增加命令。
+
+---
+
+## 七、v3.0：从 Test Extension 收敛为 Verification Kernel
+
+### 7.1 为什么收敛
+
+"Test Extension" 这个定位会把 SCT 拖进「测试生成」赛道——那是它**最弱**、
+竞争最激烈、也最容易被社区扩展碾压的方向（社区 163 个扩展里 44 个测试相关）。
+SCT 真正难以替代的是**验证**：证明 Spec 被正确实现，而不是生成更多测试。
+
+收敛后，社区的每一个测试生成/执行扩展，都从**竞争对手**变成**上游 adapter**。
+
+### 7.2 内核边界
+
+| 层 | 内容 | 归属 |
+|---|---|---|
+| **Kernel** | **Evidence Contract · Traceability · Gate** | SCT 自有，不可妥协 |
+| **Adapter** | JUnit5 / HTTP / Playwright / Golden vectors / BDD / 变异测试 | 外部接入 |
+| **Community Extension** | 性能测试 / 安全扫描 / CI 编排 / 测试平台 | 不实现，只留对接契约 |
+
+完整架构、「什么进内核」的判定规则、Adapter 接入规范见
+[`docs/verification-kernel.md`](./docs/verification-kernel.md)。
+
+### 7.3 落地状态
+
+| Step | 内容 | 状态 |
+|---|---|---|
+| 0 | **文档层收敛**：README / 方法论 / 架构文档统一 Kernel 叙事 | ✅ 完成 |
+| 1 | `Evidence Record` schema（`templates/evidence-record-schema.json`）+ `scripts/evidence-collect.py` | ⏸ 设计预留 |
+| 2 | 现有能力 adapter 目录化：`scripts/adapters/{junit5,http,playwright}/` | ⏸ 设计预留 |
+| 3 | 首个社区 adapter 接入示例（验证接口够用） | ⏸ 待 Step 1-2 |
+| 4 | 命令命名（保持 `speckit.testing.*` vs 改 `speckit.verify.*`） | ⏸ **待决策** |
+
+> **Step 4 立场（建议）**：v3.0 **不改命令名**。内核化是架构与叙事的变化，
+> 命令名是用户肌肉记忆；等 adapter 接口稳定（Step 2-3）后一次性评估，成本更低、决策更准。
+> 在此之前命令名保持不变，**定位与文档先行收敛**。
+
+### 7.4 对「三命令封顶」的再确认
+
+收敛**不是**加命令的理由——恰恰相反，它让「三命令封顶」更站得住：
+新的测试类型进 **adapter**，不进命令表。
