@@ -50,6 +50,10 @@ python $SCT_EXT_HOME/scripts/consistency-check.py \
 # --skip-api-tests / --skip-rule-tests   skip a layer (its evidence becomes N/A)
 # --prereq-timeout 3.0          interface reachability pre-check timeout
 # --profile fast|standard|strict  coverage gate profile (default: standard=90%)
+# ---- 防空洞：可选「测试有效性」维度（v2.3 起，加任一旗标即入门禁）----
+# --surefire <surefire-reports>   真实执行数 REAL_TESTS（堵"声称有测试实际 0 执行"）
+# --tasks <tasks.md>              幻影任务 PHANTOM_TASK（标 [X] 但代码无证据）
+# --verify-compile                编译门 COMPILE（默认不跑；内网无 mvn/gradle 勿开）
 ```
 
 ### Interface layer pre-check
@@ -74,13 +78,26 @@ The coverage threshold comes from the **Quality Profile** (`--profile`), not a
 hardcoded number: `fast` 70% (draft/spike) · `standard` 90% (default) ·
 `strict` 95% (release; missing intent is BLOCK).
 
+**Optional 5th dimension — 测试有效性 (anti-hollow, v2.3).** The four dimensions
+prove "tests exist, run and cover". They do not prove the tests were **really
+executed** or that claimed work isn't phantom. Pass any of `--surefire` /
+`--tasks` / `--verify-compile` and the gate adds:
+
+| Evidence | Catches | Verdict when evidence present |
+|---|---|---|
+| `REAL_TESTS` | "有测试但 0 真实执行"（surefire 空跑） | 0 执行 → BLOCK |
+| `PHANTOM_TASK` | tasks.md 标 `[X]` 但代码无实现证据 | 有幻影 → BLOCK |
+| `COMPILE` | 测试从未编译（显式 `--verify-compile` 才跑） | 编译失败 → BLOCK |
+
 **Exit codes: PASS 0 · BLOCK 1 · UNPROVEN 2.** Anything other than 0 blocks the merge.
 `UNPROVEN ≠ PASS` — missing evidence must never masquerade as green.
 
-## Step 3 — Optional: verify the tests are real
+## Step 3 — Verify the tests are real
 
-The gate above proves "tests exist, run, and cover". It does not prove they are not
-hollow. When you need that (typically L3), run the effectiveness check:
+Since v2.3 the anti-hollow checks are **folded into the gate** (Step 2): run
+`testing.run` with `--surefire` (real execution) and `--tasks` (phantom tasks) and
+they become gate evidence instead of an afterthought. The standalone tool remains
+available when you want the three checks plus the compile gate in one pass:
 
 ```bash
 python $SCT_EXT_HOME/scripts/verification-gate.py \
@@ -89,13 +106,13 @@ python $SCT_EXT_HOME/scripts/verification-gate.py \
   --tests tests/generated/ \
   --tasks specs/{feature}/tasks.md \
   --surefire backend/target/surefire-reports
-# --skip-compile          skip the compile gate
+# --skip-compile          skip the compile gate (no mvn/gradle in intranet)
 ```
 
 | Check | Catches |
 |---|---|
 | `PHANTOM_TASK` | tasks.md says `[X]` but no class/method evidence exists — claimed done, not done |
-| `COMPILE` | generated tests were never compiled |
+| `COMPILE` | generated tests were never compiled (needs mvn/gradle) |
 | `REAL_TESTS` | the report shows **0 actually executed** tests |
 
 Same three-state output: **PASS / BLOCK / UNPROVEN**.

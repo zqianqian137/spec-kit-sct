@@ -29,6 +29,12 @@ SCT 工具 3：三方一致性校验 + 详细测试报告生成
         --base main \\
         --report specs/001-batch-import/reports/test-report.md
 
+防空洞（测试有效性维度，v2.3 起，收编 verification-gate 三态）：
+        加任一旗标即在门禁中追加「测试有效性」证据项——
+        --surefire <surefire-reports>   真实执行数 REAL_TESTS（堵"声称有测试实际 0 执行"）
+        --tasks <tasks.md>              幻影任务 PHANTOM_TASK（标 [X] 但代码无证据）
+        --verify-compile                编译门 COMPILE（默认不跑；内网无 mvn/gradle 时勿开）
+
 覆盖模式（--mode 覆盖，缺省读 SoT _meta.coverage_mode，最终默认 full）：
   full        全量：SoT 应覆盖扫描范围内全部接口（新项目 / 模块整体重构）
   incremental 增量：存量项目不做全量补测——SoT 只登记本次变更范围，
@@ -65,6 +71,31 @@ from typing import Dict, List, Set, Tuple
 
 # JaCoCo 计数器类型 → 中文名（只取报告关注的三个维度）
 JACOCO_TYPES = [("INSTRUCTION", "指令 (INSTRUCTION)"), ("LINE", "行 (LINE)"), ("METHOD", "方法 (METHOD)")]
+
+# =====================================================================
+# 可选复用 verification-gate.py（同目录）的防空洞检查：
+#   --surefire        → REAL_TESTS 真实执行数
+#   --tasks           → PHANTOM_TASK 幻影任务
+#   --verify-compile  → COMPILE 编译门
+# 收编为「测试有效性」维度的证据项（v2.3 起）。verification-gate.py
+# 缺失时降级为 UNPROVEN，不假装完成。
+# =====================================================================
+_VERIFICATION_GATE = None
+
+
+def _load_verification_gate():
+    global _VERIFICATION_GATE
+    if _VERIFICATION_GATE is None:
+        try:
+            import importlib.util as _ilu
+            _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "verification-gate.py")
+            _s = _ilu.spec_from_file_location("sct_verification_gate", _p)
+            _m = _ilu.module_from_spec(_s)
+            _s.loader.exec_module(_m)
+            _VERIFICATION_GATE = _m
+        except Exception:
+            _VERIFICATION_GATE = False
+    return _VERIFICATION_GATE or None
 
 
 def load_acceptance(spec_path: Path) -> dict:
@@ -304,9 +335,17 @@ def evaluate_gates(issues: List[dict], junit: Dict[str, str] | None,
                    codegen_meta: dict | None = None,
                    trace_rows: List[dict] | None = None,
                    intent_missing: List[str] | None = None,
-                   profile: str = DEFAULT_PROFILE) -> List[dict]:
-    """把门禁落成**四维结构化证据**（P0-3）：
-    需求覆盖 / 执行结果 / 证据完整性 / 测试完整性。
+                   profile: str = DEFAULT_PROFILE,
+                   tasks_path: str | None = None,
+                   surefire_dir: str | None = None,
+                   verify_compile: bool = False,
+                   compile_timeout: int = 300,
+                   skip_rule_tests: bool = False,
+                   code_root: str | None = None) -> List[dict]:
+    """把门禁落成**结构化证据**（P0-3，四维 + 可选第五维「测试有效性」）：
+    需求覆盖 / 执行结果 / 证据完整性 / 测试完整性，
+    提供 --surefire / --tasks / --verify-compile 时追加「测试有效性」（防空洞，
+    v2.3 起收编 verification-gate 的 REAL_TESTS / PHANTOM_TASK / COMPILE）。
 
     每个证据项独立判 PASS/BLOCK/UNPROVEN/NOT_APPLICABLE，整体取最严。
     覆盖率门槛由 Quality Profile（P0-4）决定，不再硬编码。
@@ -424,6 +463,53 @@ def evaluate_gates(issues: List[dict], junit: Dict[str, str] | None,
             gates.append({"id": "TEST_INTEGRITY", "dimension": "测试完整性",
                           "verdict": "PASS",
                           "detail": f"{len(expected)} 个生成文件 hash 一致且意图完整"})
+
+    # ===== 维度 5（可选）：测试有效性 TEST_EFFECTIVENESS（防空洞，v2.3 起）=====
+    # 提供 --surefire / --tasks / --verify-compile 中的任一旗标即激活本维度。
+    # 回答"测试不仅存在，而且真的被执行了、任务不是幻影"——堵"声称有测试
+    # 实际 0 个执行"的假绿。verification-gate.py 缺失时降级 UNPROVEN。
+    if tasks_path or surefire_dir or verify_compile:
+        vg = _load_verification_gate()
+        if vg is None:
+            gates.append({"id": "TEST_EFFECTIVENESS", "dimension": "测试有效性",
+                          "verdict": "UNPROVEN",
+                          "detail": "verification-gate.py 不可用（应位于 scripts/ 同目录），"
+                                    "无法评估测试有效性——不假装通过"})
+        else:
+            # 1) 真实执行数 REAL_TESTS：读 surefire TEST-*.xml 的实际执行数
+            if not surefire_dir:
+                gates.append({"id": "REAL_TESTS", "dimension": "测试有效性",
+                              "verdict": "NOT_APPLICABLE",
+                              "detail": "未提供 --surefire（真实执行报告）；提供后防空洞证据才能判定"})
+            elif skip_rule_tests:
+                gates.append({"id": "REAL_TESTS", "dimension": "测试有效性",
+                              "verdict": "NOT_APPLICABLE",
+                              "detail": "--skip-rule-tests：单测层跳过，真实执行数不判定"})
+            else:
+                st, _n, dt = vg.check_real_tests(surefire_dir)
+                gates.append({"id": "REAL_TESTS", "dimension": "测试有效性",
+                              "verdict": st, "detail": dt})
+            # 2) 幻影任务 PHANTOM_TASK：tasks.md 标 [X] 但代码中无实现证据
+            if not tasks_path:
+                gates.append({"id": "PHANTOM_TASK", "dimension": "测试有效性",
+                              "verdict": "NOT_APPLICABLE",
+                              "detail": "未提供 --tasks（tasks.md）；提供后幻影检测才能判定"})
+            else:
+                st, items, dt = vg.check_phantom_tasks(
+                    tasks_path, code_root or "", str(tests_root) if tests_root else "")
+                if items:
+                    dt += "　例：" + "；".join(i["task"][:40] for i in items[:3])
+                gates.append({"id": "PHANTOM_TASK", "dimension": "测试有效性",
+                              "verdict": st, "detail": dt})
+            # 3) 编译门 COMPILE：显式 --verify-compile 才跑（内网无 mvn/gradle 默认不拖累门禁）
+            if not verify_compile:
+                gates.append({"id": "COMPILE", "dimension": "测试有效性",
+                              "verdict": "NOT_APPLICABLE",
+                              "detail": "未开启 --verify-compile；有真实执行报告（--surefire）即隐含编译通过"})
+            else:
+                st, dt = vg.check_compile(code_root or "", compile_timeout)
+                gates.append({"id": "COMPILE", "dimension": "测试有效性",
+                              "verdict": st, "detail": dt.replace("\n", " ")[:300]})
     return gates
 
 
@@ -1042,7 +1128,9 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
                 else "（先消除 BLOCK 项再合入）" if verdict == "BLOCK"
                 else "（证据不足，补齐 --junit / --jacoco + --base 后重跑；UNPROVEN ≠ PASS）"))
     L.append("")
-    L.append("> BLOCK 处置路径：改 spec / 改 code / 改 SoT → 重跑 `testing.design` → `testing.run` → `testing.design`。")
+    L.append("> BLOCK 处置路径：先归因断掉的环节（漏测/意图缺失→`testing.design` 重生成；未实现→补实现；"
+             "覆盖率→补用例；手改→`testing.design --force`）→ 重跑 `testing.run`。改契约（acceptance.yaml）"
+             "需连带改 spec 后重新生成。")
     return "\n".join(L), verdict
 
 
@@ -1153,6 +1241,13 @@ def main():
     parser.add_argument("--module-src", default="",
                         help="F-17：模块内源码相对路径（默认 src/main/java；源码在 src/main/kotlin "
                              "或自定义目录时用）")
+    # v2.3 防空洞维度（测试有效性）：提供任一旗标即在门禁中激活
+    parser.add_argument("--surefire", help="surefire-reports 目录（Java 真实执行报告）→ REAL_TESTS 真实执行数入门禁")
+    parser.add_argument("--tasks", help="tasks.md 路径 → PHANTOM_TASK 幻影任务入门禁（声称完成但代码无证据）")
+    parser.add_argument("--verify-compile", action="store_true",
+                        help="开启编译门 COMPILE（mvn/gradle test-compile）；内网无构建环境时勿开")
+    parser.add_argument("--compile-timeout", type=int, default=300,
+                        help="编译门超时（秒），默认 300")
     args = parser.parse_args()
 
     spec = load_acceptance(Path(args.spec))
@@ -1221,7 +1316,12 @@ def main():
                            skip_api_tests=args.skip_api_tests,
                            tests_root=Path(args.tests), codegen_meta=codegen_meta,
                            trace_rows=trace_rows, intent_missing=intent_missing,
-                           profile=profile)
+                           profile=profile,
+                           tasks_path=args.tasks, surefire_dir=args.surefire,
+                           verify_compile=args.verify_compile,
+                           compile_timeout=args.compile_timeout,
+                           skip_rule_tests=args.skip_rule_tests,
+                           code_root=str(code_root))
     verdict = overall_verdict(gates)
 
     # 落盘详细报告 + 终端摘要

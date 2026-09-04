@@ -1,6 +1,6 @@
 # SCT 内网实践操作手册
 
-> 版本：v2.2.0（对应 spec-kit-sct 发布包。**v2.2.0 定位收敛为 Verification Kernel（验证内核）**：SCT 只自有 Evidence Contract / Traceability / Gate 三件事，测试生成（JUnit / HTTP / E2E / Golden / BDD）全部归 Adapter，adapter 只产出证据、**裁决权不下放**；命令名 `speckit.testing.*` 保持不变。历史：v1.0.4 独立跳过层与预检退出码 3；v1.0.5 JDK 8 兼容；v1.0.6 实战问题全修；v1.1.0 新增有效性门；v1.1.2 移除 preset；v1.1.3 check 三态证据门禁；v1.2.0 方法论重构 + 覆盖率门禁 90%；v1.3.0 命令精简 6→3；v1.4.0 after_plan 钩子 + 统一报告 + 案例正反例；v1.5.0 代码减法；**v2.0.0** 定位升级 Spec→Contract→Test→Evidence→Gate + 三大原则 + `testing.cases`→`testing.design`；**v2.1.0** P0 四件事落地（Contract Schema + 追溯矩阵 + 四维证据 + Quality Profile）+ self-test golden 回归；**v2.2.0** 架构文档 `docs/verification-kernel.md` + 发布前一致性 cleanup 14 项 + 自检脚本 `scripts/check-release-consistency.py`）  
+> 版本：v2.3.0（对应 spec-kit-sct 发布包。**v2.2.0 定位收敛为 Verification Kernel（验证内核）**：SCT 只自有 Evidence Contract / Traceability / Gate 三件事，测试生成（JUnit / HTTP / E2E / Golden / BDD）全部归 Adapter，adapter 只产出证据、**裁决权不下放**；命令名 `speckit.testing.*` 保持不变。历史：v1.0.4 独立跳过层与预检退出码 3；v1.0.5 JDK 8 兼容；v1.0.6 实战问题全修；v1.1.0 新增有效性门；v1.1.2 移除 preset；v1.1.3 check 三态证据门禁；v1.2.0 方法论重构 + 覆盖率门禁 90%；v1.3.0 命令精简 6→3；v1.4.0 after_plan 钩子 + 统一报告 + 案例正反例；v1.5.0 代码减法；**v2.0.0** 定位升级 Spec→Contract→Test→Evidence→Gate + 三大原则 + `testing.cases`→`testing.design`；**v2.1.0** P0 四件事落地（Contract Schema + 追溯矩阵 + 四维证据 + Quality Profile）+ self-test golden 回归；**v2.2.0** 架构文档 `docs/verification-kernel.md` + 发布前一致性 cleanup 14 项 + 自检脚本 `scripts/check-release-consistency.py`；**v2.3.0** 防空洞收编：Gate 可选「测试有效性」维度（`--surefire`→REAL_TESTS / `--tasks`→PHANTOM_TASK / `--verify-compile`→COMPILE），adapter 目录化触发式搁置，self-test 四档）  
 > 适用对象：内网试点项目组成员  
 > 宿主 Agent：**opencode**（离线部署，模型走内网网关）  
 > 前置阅读：无需了解 spec-kit 源码，会用命令行即可
@@ -335,6 +335,10 @@ python .specify/extensions/sct/scripts/consistency-check.py \
 **退出码：PASS=0 / BLOCK=1 / UNPROVEN=2**（预检询问仍为 3）。整体取最严；
 `--skip-api-tests` 时覆盖与执行两项记 N/A 不参与（显式跳过 ≠ 证据缺失）。
 
+> **v2.3 可选防空洞维度**：给 testing.run 加 `--surefire` / `--tasks` / `--verify-compile`
+> 即追加 REAL_TESTS（真实执行数，0 执行 → BLOCK）/ PHANTOM_TASK（标 [X] 但代码无证据）/
+> COMPILE（编译门）证据项——回答"测试不仅存在，而且真的执行了"。
+
 > ⚠️ **UNPROVEN 不是 PASS**：缺 junit/jacoco 证据时结论为 UNPROVEN（退出码 2），
 > 补齐证据重跑才放行。v1.1.2 及之前覆盖率只打印不阻断、手改生成测试不感知——
 > 这两个漏洞已在 v1.1.3 堵上（分别对应证据项 2 和 4）。
@@ -635,3 +639,4 @@ SCT 的 codegen/check 本身是确定性脚本，慢主要来自模型侧。建�
 | v2.0.0 | **定位升级** Spec→Contract→Test→Evidence→Gate，三大原则（Oracle Independence / Write-once / PASS-BLOCK-UNPROVEN）；`testing.cases`→`testing.design`（测试设计+制定任务，可调用 skill 池）；`--skip-rules`→`--skip-unit-tests`；新增 ROADMAP.md；1.1 / 4.2 节 |
 | v2.1.0 | **P0 四件事落地**：① Contract（`templates/acceptance-schema.json` + `scripts/contract-validate.py` 零依赖三态校验）② Traceability（报告固定章节「需求追溯矩阵 REQ→AC→TEST→EXECUTION→EVIDENCE」，含 Java 单测识别）③ Evidence（门禁重构为四维证据：需求覆盖/执行结果/证据完整性/测试完整性）④ Quality Profile（`--profile fast 70% / standard 90% / strict 95%` 替代硬编码 90%）；另加 `scripts/self-test.py` 三档回归（golden/blocker/gate），已捕获并修复 2 个真实缺陷 |
 | v2.2.0 | **定位收敛为 Verification Kernel（验证内核）**：只自有 Evidence Contract / Traceability / Gate 三件事，测试生成归 Adapter；新增 `docs/verification-kernel.md`（Kernel/Adapter 边界 + `Evidence Record` 接口 + 三问判定规则 + 社区扩展接入关系）；新增 `scripts/check-release-consistency.py` 发布前一致性自检（7 项三态检查）；**发布前一致性 cleanup 14 项**（根目录 v1.1.2 陈旧快照对齐、旧命令名残留、zero hooks 表述、hooks 计数、profile 文档、SoT 术语、描述/tags 对齐、两份副本内容分叉、门禁表四维 gate id 对齐、profile 口径、方法论 v2.2.0 回访）；**命令名 `speckit.testing.*` 不变**；1.1 / 4.2 节 |
+| v2.3.0 | **防空洞收编**：`testing.run`（consistency-check）门禁增加可选「测试有效性」维度——`--surefire`→REAL_TESTS（surefire 真实执行为 0 即 BLOCK）、`--tasks`→PHANTOM_TASK（标 [X] 无代码证据）、`--verify-compile`→COMPILE（编译门，默认不跑）；adapter 目录化（v3.0 Step 1-2）按用户拍板改**触发式搁置**；self-test 增至四档（新增 anti-hollow）；ROADMAP / verification-kernel 同步 |

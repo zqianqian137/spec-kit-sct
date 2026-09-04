@@ -3,6 +3,39 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.3.0] - 2026-09-04
+
+### Changed — 路线纠偏：v3.0 主线 = 防漏测 / 防空洞收口（用户拍板）
+
+用户判定「adapter 目录化」跑偏——它的目的是"多语言 / 多生成器可插拔"，而用户的目的是
+**测试不遗漏 + 测试到位**。当前只有 Java 一个生成器、无第二个接入方，为可插拔做重构
+属于为架构而架构：
+
+- ROADMAP 第七节 / `docs/verification-kernel.md` §6 的 **Step 1-2（`Evidence Record` 代码化 +
+  adapter 目录化）从主线改为「⏸ 触发式搁置」**：触发条件（第二语言/生成器需求，或社区 adapter
+  真实接入）满足才启动；
+- Kernel / Adapter 的**叙事与红线保留**（社区扩展仍是上游 adapter），工程不先行；
+- 优先级让给直接服务"不遗漏 / 到位"的收口工作（见下）。
+
+### Added — Gate 可选第五维「测试有效性」（防空洞）
+
+把 `verification-gate.py` 的三个三态检查**收编进 `testing.run` 门禁**（consistency-check.py）：
+
+- `--surefire <dir>` → **`REAL_TESTS`**（真实执行数）：surefire 报告实际执行为 0 → **BLOCK**，
+  堵"声称有测试、实际一个都没跑"的假绿；
+- `--tasks <tasks.md>` → **`PHANTOM_TASK`**（幻影任务）：tasks.md 标 `[X]` 但代码无实现证据 → BLOCK；
+- `--verify-compile` → **`COMPILE`**（编译门）：显式开启才跑——内网无 mvn/gradle 时不拖累门禁
+  （有 surefire 真实执行即隐含已编译）；
+- 任一旗标提供即在报告 §1 与终端摘要追加「测试有效性」维度证据项；`verification-gate.py`
+  缺失时降级 **UNPROVEN**（不假装完成）；整体取最严的语义不变。
+
+`verification-gate.py` 保留独立使用（三检查 + 编译门一把梭）。
+
+### Changed — self-test 增至四档
+
+- 新增第 4 档 **anti-hollow**：surefire 真实执行 0 → `REAL_TESTS` BLOCK(exit 1)；
+  有真实执行（2 个全过）→ PASS(exit 0)。golden / blocker / gate / anti-hollow 四档全绿。
+
 ## [2.2.0] - 2026-09-04
 
 ### Changed — 定位收敛：从 Test Extension 到 Verification Kernel

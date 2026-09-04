@@ -5,10 +5,11 @@ self-test.py — SCT 自测（SCT 2.0 P1-3：自测 + golden fixtures + 回归�
 不依赖 pytest/外部工具，纯 stdlib + 本地脚本，跑完整链路并断言：
   契约校验(contract-validate) → 测试派生(codegen) → 门禁(check) → 追溯矩阵
 
-断言三档：
-  golden  合法契约全链路应 PASS
-  blocker 坏契约（重复 ID）应被 contract-validate BLOCK
-  gate    漏测场景应被 check BLOCK
+断言四档：
+  golden    合法契约全链路应 PASS
+  blocker   坏契约（重复 ID）应被 contract-validate BLOCK
+  gate      漏测场景应被 check BLOCK
+  anti-hollow  surefire 真实执行数为 0 → check 的 REAL_TESTS 应 BLOCK（防空洞，v2.3）
 
 用法：python scripts/self-test.py   （退出码 0=全过 1=有失败）
 """
@@ -132,11 +133,36 @@ def main() -> int:
         # 契约中 BR-F003-002 无 test_cases → 不生成对应测试（规则漂移或漏测判定由 check 处理）
         check("check 可运行", r.returncode in (0, 1), r.stdout[-300:])
 
+        # ---- anti-hollow：surefire 0 真实执行应 BLOCK（防空洞，v2.3）----
+        print("4) anti-hollow（surefire 真实执行为 0 → REAL_TESTS BLOCK）")
+        ah = tdir / "ah"
+        (ah / "sf0").mkdir(parents=True)
+        (ah / "sf1").mkdir()
+        (ah / "tasks.md").write_text("- [x] 实现 UpController.upload 批量上传接口\n", encoding="utf-8")
+        (ah / "sf0" / "TEST-Empty.xml").write_text(
+            '<testsuite name="EmptySuite" tests="0" failures="0" errors="0" skipped="0"/>', encoding="utf-8")
+        (ah / "sf1" / "TEST-Run.xml").write_text(
+            '<testsuite name="RunSuite" tests="2" failures="0" errors="0" skipped="0"/>', encoding="utf-8")
+        # 反例：声称有测试但 0 真实执行 → 门禁必须 BLOCK（exit 1）
+        r = run([PY, str(SCRIPTS / "consistency-check.py"),
+                 "--spec", str(tdir / "acceptance.yaml"), "--code", str(tdir / "code"),
+                 "--tests", str(tdir / "out"), "--skip-api-tests",
+                 "--surefire", str(ah / "sf0"), "--tasks", str(ah / "tasks.md")])
+        check("REAL_TESTS=0 → BLOCK(exit 1)", r.returncode == 1 and "REAL_TESTS" in r.stdout,
+              r.stdout[-300:])
+        # 正例：有真实执行（2 个全过）→ 有效性维度 PASS，整体沿 golden 仍 PASS
+        r = run([PY, str(SCRIPTS / "consistency-check.py"),
+                 "--spec", str(tdir / "acceptance.yaml"), "--code", str(tdir / "code"),
+                 "--tests", str(tdir / "out"), "--skip-api-tests",
+                 "--surefire", str(ah / "sf1"), "--tasks", str(ah / "tasks.md")])
+        check("REAL_TESTS>0 → PASS(exit 0)", r.returncode == 0 and "REAL_TESTS" in r.stdout,
+              r.stdout[-300:])
+
     print("-" * 60)
     if failures:
         print(f"❌ {len(failures)} 项自测失败: {', '.join(failures)}")
         return 1
-    print("✅ 全部自测通过（golden / blocker / gate 三档）")
+    print("✅ 全部自测通过（golden / blocker / gate / anti-hollow 四档）")
     return 0
 
 

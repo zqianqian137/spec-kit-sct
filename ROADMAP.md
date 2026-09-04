@@ -61,13 +61,17 @@ PASS / BLOCK / UNPROVEN (Quality Gate)
 
 ### P1 — 架构演进（v2.1.0 部分落地）
 
-- **自测 + golden fixtures** ✅：`scripts/self-test.py` 三档回归（golden 全链路 / blocker 坏契约 / gate 漏测），
-  零外部依赖。已捕获并修复 2 个真实缺陷（manifest 相对路径、Java 单测追溯误判）
+- **自测 + golden fixtures** ✅：`scripts/self-test.py` 四档回归（golden 全链路 / blocker 坏契约 / gate 漏测 /
+  anti-hollow 0 真实执行），零外部依赖。已捕获并修复 2 个真实缺陷（manifest 相对路径、Java 单测追溯误判）
 - **SoT 三层拆分**（generated / overrides / lock）：⏸ 设计预留——当前以「派生字段 vs 人工字段」分区 +
   write-once manifest 守卫；完整拆分为独立文件需配套迁移工具，标记为下个里程碑
-- **codegen adapter 化**（语言中立）：⏸ **已升级为 v3.0 主线**——见[第七节](#七v30从-test-extension-收敛为-verification-kernel)。
-  当前 Java/JUnit 为默认 emitter，self-test 已固定 Java 测试路径约定；
-  完整 adapter 接口（`Evidence Record` + `scripts/adapters/{junit5,http,playwright}/`）见 `docs/verification-kernel.md`
+- **codegen adapter 化**（语言中立）：⏸ **触发式搁置（v2.3 起）**——见[第七节 7.3](#七v30从-test-extension-收敛为-verification-kernel)。
+  当前 Java/JUnit 为默认 emitter、无第二个接入方，目录化重构不服务"不遗漏/到位"目标，不做；
+  触发条件（第二语言/社区 adapter 真实接入）满足才启动。架构接口（`Evidence Record` +
+  `scripts/adapters/...`）设计见 `docs/verification-kernel.md`
+- **防空洞收编** ✅ v2.3.0：verification-gate 的 REAL_TESTS / PHANTOM_TASK / COMPILE
+  以 `--surefire` / `--tasks` / `--verify-compile` 收编进 testing.run 门禁（可选「测试有效性」维度），
+  堵"声称有测试实际 0 执行"的假绿；self-test 增第 4 档 anti-hollow 反例
 - 跨平台 CI：内网无 CI 条件，以 `scripts/self-test.py` 替代（手动/定时可跑）
 
 ### P2 — 边界控制（✅ 已明确，写入方法论评估）
@@ -117,10 +121,18 @@ SCT 真正难以替代的是**验证**：证明 Spec 被正确实现，而不是
 | Step | 内容 | 状态 |
 |---|---|---|
 | 0 | **文档层收敛**：README / 方法论 / 架构文档统一 Kernel 叙事 | ✅ 完成 |
-| 1 | `Evidence Record` schema（`templates/evidence-record-schema.json`）+ `scripts/evidence-collect.py` | ⏸ 设计预留 |
-| 2 | 现有能力 adapter 目录化：`scripts/adapters/{junit5,http,playwright}/` | ⏸ 设计预留 |
-| 3 | 首个社区 adapter 接入示例（验证接口够用） | ⏸ 待 Step 1-2 |
+| 0.5 | **防空洞收编（v2.3 落地）**：verification-gate 三态（REAL_TESTS / PHANTOM_TASK / COMPILE）<br>以 `--surefire` / `--tasks` / `--verify-compile` 收编进 testing.run 门禁，成为可选第五维「测试有效性」 | ✅ v2.3.0 |
+| 1 | `Evidence Record` schema（`templates/evidence-record-schema.json`）+ `scripts/evidence-collect.py` | ⏸ **触发式搁置** |
+| 2 | 现有能力 adapter 目录化：`scripts/adapters/{junit5,http,playwright}/` | ⏸ **触发式搁置** |
+| 3 | 首个社区 adapter 接入示例（验证接口够用） | ⏸ 待触发条件 |
 | 4 | 命令命名（保持 `speckit.testing.*` vs 改 `speckit.verify.*`） | ⏸ **待决策** |
+
+> **Step 1-2 为何搁置（2026-09-04 用户拍板）**：adapter 目录化 / Evidence Record 代码化
+> 服务的是"多语言、多生成器可插拔"——当前只有 Java 一个生成器、无第二个接入方，为它付钱
+> 属于**为架构而架构（跑偏）**。用户目标只有两条：**测试不遗漏 + 测试到位（防空洞）**。
+> 触发条件（满足其一才启动）：出现第二语言/生成器需求，或社区 adapter 真实接入。
+> 在此之前：Kernel/Adapter 的**叙事与红线保留**（已让社区扩展从竞品变上游），工程不先行。
+> 优先级让给 Step 0.5 这类直接服务"不遗漏/到位"的收口工作。
 
 > **Step 4 立场（建议）**：v3.0 **不改命令名**。内核化是架构与叙事的变化，
 > 命令名是用户肌肉记忆；等 adapter 接口稳定（Step 2-3）后一次性评估，成本更低、决策更准。

@@ -150,6 +150,13 @@ The coverage threshold is **not hardcoded** — it comes from a Quality Profile:
 | `--profile standard` (default) | ≥ **90%** | the normal gate — this is the documented default                 |
 | `--profile strict`            | ≥ **95%** | release / regulated change; 意图缺失 (missing intent) 直接 BLOCK |
 
+**Optional 5th dimension — 测试有效性 (anti-hollow, v2.3).** The four dimensions
+prove tests *exist, run and cover*; they do not prove they were *really executed*
+or that claimed work isn't phantom. Pass any of `--surefire` (real execution
+count) / `--tasks` (phantom tasks) / `--verify-compile` (compile gate) to `run`
+and the corresponding evidence items join the verdict — 0 actually-executed tests
+or a phantom task = **BLOCK**.
+
 Exit codes: **PASS 0 · BLOCK 1 · UNPROVEN 2** — missing evidence never  
 masquerades as green (`UNPROVEN ≠ PASS`). Anything other than 0 blocks the merge.
 
@@ -219,7 +226,7 @@ for a human reviewer:
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.2.0.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.3.0.zip
 ```
 
 Or install from a local checkout during development:

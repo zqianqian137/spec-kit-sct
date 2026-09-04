@@ -7,8 +7,9 @@
 > 其余一切（JUnit / HTTP / E2E / Golden / BDD / 变异）都是 **Adapter** 或 **Community Extension**。
 >
 > ⚠️ **状态如实标注**：本文是架构规范。第 2 节的三个内核组件在 v2.1.0 已**落地并运行**；
-> 第 3 节的 `Evidence Record` 接口与第 6 节的 adapter 目录化是**设计目标**，尚未完全代码化。
-> 未完成的部分不假装完成——按 SCT 自己的规矩，它们的状态是 **UNPROVEN**。
+> v2.3.0 把「防空洞」收编进门禁（Gate 可选第五维「测试有效性」，见 §6 Step 0.5）。
+> 第 3 节的 `Evidence Record` 接口与第 6 节的 adapter 目录化已按用户拍板**触发式搁置**
+> （出现第二语言/社区 adapter 接入需求才启动，见 §6），当前状态 **UNPROVEN**——不假装完成。
 
 ---
 
@@ -145,11 +146,23 @@ Q3 它决定「证据怎么产生」吗？  → 是 = Adapter
 
 | Step | 内容 | 状态 |
 |---|---|---|
-| **0** | **文档层收敛**：README / 方法论 / 本文统一 Kernel 叙事 | ✅ 本次完成 |
-| **1** | `Evidence Record` schema 落地为 `templates/evidence-record-schema.json` + `scripts/evidence-collect.py` | ⏸ 设计预留 |
-| **2** | 现有能力 adapter 目录化：`scripts/adapters/{junit5,http,playwright}/`，每个 adapter 暴露 `emit` / `collect` | ⏸ 设计预留 |
-| **3** | 首个社区 adapter 接入示例（验证接口够用） | ⏸ 待 Step 1-2 |
+| **0** | **文档层收敛**：README / 方法论 / 本文统一 Kernel 叙事 | ✅ v2.2.0 |
+| **0.5** | **防空洞收编（v2.3.0 落地）**：verification-gate 三态（REAL_TESTS / PHANTOM_TASK / COMPILE）<br>以 `--surefire` / `--tasks` / `--verify-compile` 收编进 testing.run 门禁，成为可选「测试有效性」维度 | ✅ v2.3.0 |
+| **1** | `Evidence Record` schema 落地为 `templates/evidence-record-schema.json` + `scripts/evidence-collect.py` | ⏸ **触发式搁置** |
+| **2** | 现有能力 adapter 目录化：`scripts/adapters/{junit5,http,playwright}/`，每个 adapter 暴露 `emit` / `collect` | ⏸ **触发式搁置** |
+| **3** | 首个社区 adapter 接入示例（验证接口够用） | ⏸ 待触发条件 |
 | **4** | 命令命名（保持 `speckit.testing.*` 还是改 `speckit.verify.*`） | ⏸ **待决策** |
+
+### 关于 Step 1-2 的立场（2026-09-04 更新）
+
+**Step 1-2 触发式搁置，不再作为主线推进**。理由（用户拍板）：
+
+- 这两步服务的是"多语言 / 多生成器可插拔"——当前只有 Java 一个生成器、无第二个接入方，
+  目录化重构不服务 SCT 的目标（**测试不遗漏 + 测试到位**），属于为架构而架构；
+- Kernel/Adapter 的**叙事与红线保留**（它已把社区扩展从竞品变成上游），只是**工程不先行**；
+- 触发条件（满足其一才启动）：① 出现第二语言/生成器需求；② 社区 adapter 真实接入；
+  ③ Step 0.5 收口完成后仍有效益空间。
+- 优先级让给直接服务目标的工作：如 Step 0.5 防空洞收编（把"存在≠执行"堵进门禁）。
 
 ### 关于 Step 4 的立场（建议）
 
