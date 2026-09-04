@@ -61,6 +61,16 @@ Output: `specs/{feature}/acceptance.yaml`
 > ```
 
 ## Step 2 — Optional: change-impact tiering
+### Step 1.5 — Validate the contract (P0-1)
+
+> **契约校验（v2.1 起，P0-1）**：契约进入下游前必须通过确定性校验
+> （结构 + ID 唯一性 + 格式）。BLOCK 时先修契约，不要带着坏契约往下走。
+>
+> ```bash
+> python $SCT_EXT_HOME/scripts/contract-validate.py --contract specs/{feature}/acceptance.yaml
+> # 退出码 0=PASS 1=BLOCK 2=UNPROVEN；--json <path> 可落结构化结果
+> ```
+
 
 When the code already changed (typical `post` flow), add impact analysis to the plan —
 this reverse-traces the diff to affected scenarios and sets the tier that controls

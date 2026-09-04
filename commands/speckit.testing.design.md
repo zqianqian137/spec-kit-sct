@@ -32,6 +32,16 @@ manifest, and `testing.run` treats hand-edited generated files as a gate failure
 | Output dir | `tests/generated/` (or your project's test root) |
 
 ## Step 1 — Design (may consult a skill pool to raise quality)
+### Step 0.5 — Validate the contract (P0-1)
+
+> **契约校验（v2.1 起，P0-1）**：契约进入下游前必须通过确定性校验
+> （结构 + ID 唯一性 + 格式）。BLOCK 时先修契约，不要带着坏契约往下走。
+>
+> ```bash
+> python $SCT_EXT_HOME/scripts/contract-validate.py --contract specs/{feature}/acceptance.yaml
+> # 退出码 0=PASS 1=BLOCK 2=UNPROVEN；--json <path> 可落结构化结果
+> ```
+
 
 Before generating code, the design step decides **what to test and how**, anchored
 on the contract. You may invoke a project skill pool (testing / QA expertise) here

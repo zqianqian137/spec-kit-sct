@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: sct
   name: "Spec-Code-Test Consistency (SCT)"
-  version: "2.0.0"
+  version: "2.1.0"
   description: "Test-domain extension for Spec Kit: auto-generate a test plan from spec + plan artifacts, derive write-once tests across unit / interface (protocol-agnostic) / e2e (scenario cases), and gate every change on hard evidence (coverage ≥90%, cases 100% passing, no missing coverage) with a human-reviewable report."
   author: zqianqian137
   repository: https://github.com/zqianqian137/spec-kit-sct

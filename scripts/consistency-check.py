@@ -121,9 +121,16 @@ def extract_code_apis(code_root: Path, scope_filter: str = "all") -> Set[str]:
 
 def extract_test_coverage(test_root: Path) -> Dict[str, Set[str]]:
     """扫描测试文件，提取已覆盖的 API / 规则 / 场景，以及全部测试函数名"""
-    coverage = {"apis": set(), "rules": set(), "scenarios": set(), "funcs": set()}
+    coverage = {"apis": set(), "rules": set(), "scenarios": set(), "funcs": set(),
+                "java_tests": set()}
     if not test_root.exists():
         return coverage
+    # Java 单测类（target.class 有值时生成 <Class>Test.java，如 UpControllerTest）
+    for jf in test_root.rglob("*Test.java"):
+        content = jf.read_text(encoding="utf-8", errors="ignore")
+        m = re.search(r'class\s+(\w+Test)\b', content)
+        if m:
+            coverage["java_tests"].add(m.group(1))
     for test_file in test_root.rglob("test_*.py"):
         # 从文件名提取（F-2 命名：test_api_001.py → 末段 001，与 SoT id API-F003-001 末段匹配）
         m = re.search(r'test_api_([\w]+)\.py', test_file.name)
@@ -269,73 +276,129 @@ def summarize_exec(results: Dict[str, str]) -> Tuple[int, int, int, int]:
 
 VERDICT_ORDER = {"BLOCK": 3, "UNPROVEN": 2, "PASS": 1, "NOT_APPLICABLE": 0}
 
+# =====================================================================
+# P0-4 Quality Profile：用档位替代硬编码的「90% 覆盖率」
+#   fast     快速验证：覆盖率门槛低，测试完整性要求宽松（改代码时的快速反馈）
+#   standard 标准：当前默认（覆盖率 90% + 测试完整性严格）
+#   strict   严格：覆盖率 95%，不放过任何 UNPROVEN 缝隙
+# =====================================================================
+
+PROFILES = {
+    "fast": {"coverage": 70, "label": "快速验证"},
+    "standard": {"coverage": 90, "label": "标准"},
+    "strict": {"coverage": 95, "label": "严格"},
+}
+DEFAULT_PROFILE = "standard"
+
+# 2.0 四维证据（P0-3）：每个 gate 归属一个维度
+EVIDENCE_DIMENSIONS = ["需求覆盖", "执行结果", "证据完整性", "测试完整性"]
+
+
+def profile_coverage(profile: str) -> int:
+    return PROFILES.get(profile, PROFILES[DEFAULT_PROFILE])["coverage"]
+
 
 def evaluate_gates(issues: List[dict], junit: Dict[str, str] | None,
                    incr: dict | None, coverage_target: int,
                    skip_api_tests: bool, tests_root: Path | None = None,
-                   codegen_meta: dict | None = None) -> List[dict]:
-    """把 README 宣称的门禁逐项落成结构化证据。
+                   codegen_meta: dict | None = None,
+                   trace_rows: List[dict] | None = None,
+                   intent_missing: List[str] | None = None,
+                   profile: str = DEFAULT_PROFILE) -> List[dict]:
+    """把门禁落成**四维结构化证据**（P0-3）：
+    需求覆盖 / 执行结果 / 证据完整性 / 测试完整性。
 
-    修复 P0-2：增量行覆盖率与全部生成测试的执行结果必须参与最终判定，
-    不再只打印进报告。junit 统计覆盖 test_api_/test_rules/test_scenarios/
-    全部生成产物，不再只看 test_api_ 前缀。
+    每个证据项独立判 PASS/BLOCK/UNPROVEN/NOT_APPLICABLE，整体取最严。
+    覆盖率门槛由 Quality Profile（P0-4）决定，不再硬编码。
     """
     gates: List[dict] = []
+    trace_rows = trace_rows or []
+    intent_missing = intent_missing or []
 
-    # 1) NO_HIGH_DRIFT —— 三方一致性（spec↔code↔test）
+    # ===== 维度 1：需求覆盖 REQUIREMENT_COVERAGE =====
     high = [i for i in issues if i["severity"] == "HIGH"]
-    gates.append({
-        "id": "NO_HIGH_DRIFT",
-        "verdict": "BLOCK" if high else "PASS",
-        "detail": f"{len(high)} 个 HIGH 漂移" if high else "无 HIGH 漂移",
-    })
+    no_test = [r for r in trace_rows if r["test"] == "—"]
+    if no_test or high:
+        parts = []
+        if no_test:
+            parts.append(f"{len(no_test)} 条契约条目无测试（漏测）")
+        if high:
+            parts.append(f"{len(high)} 个 HIGH 漂移")
+        gates.append({"id": "REQUIREMENT_COVERAGE", "dimension": "需求覆盖",
+                      "verdict": "BLOCK",
+                      "detail": "；".join(parts) + "（详见报告「需求追溯矩阵」）"})
+    else:
+        gates.append({"id": "REQUIREMENT_COVERAGE", "dimension": "需求覆盖",
+                      "verdict": "PASS" if trace_rows else "UNPROVEN",
+                      "detail": (f"{len(trace_rows)} 条契约条目全部有测试与实现"
+                                 if trace_rows else "无可追溯条目")})
 
-    # 2) LINE_COVERAGE —— 增量行覆盖率（门禁 ≥90%，必须真阻断）
+    # ===== 维度 2：执行结果 EXECUTION_RESULT（通过率 + 覆盖率）=====
     if skip_api_tests:
-        gates.append({"id": "LINE_COVERAGE", "verdict": "NOT_APPLICABLE",
-                      "detail": "--skip-api-tests：接口层跳过，覆盖率不判定"})
+        gates.append({"id": "EXECUTION_RESULT", "dimension": "执行结果",
+                      "verdict": "NOT_APPLICABLE", "detail": "--skip-api-tests：执行层跳过"})
+    elif not junit:
+        gates.append({"id": "EXECUTION_RESULT", "dimension": "执行结果",
+                      "verdict": "UNPROVEN", "detail": "未提供 --junit，执行结果未验证"})
+    else:
+        p, f, sk, total = summarize_exec(junit)
+        if total == 0 or (p == 0 and f == 0):
+            gates.append({"id": "EXECUTION_RESULT", "dimension": "执行结果",
+                          "verdict": "UNPROVEN",
+                          "detail": f"junit 中无可执行用例（总数 {total}，跳过 {sk}）"})
+        elif f > 0:
+            gates.append({"id": "EXECUTION_RESULT", "dimension": "执行结果",
+                          "verdict": "BLOCK",
+                          "detail": f"{f} 个用例失败/错误（通过 {p}，跳过 {sk}，总数 {total}）"})
+        else:
+            gates.append({"id": "EXECUTION_RESULT", "dimension": "执行结果",
+                          "verdict": "PASS", "detail": f"{p}/{total} 通过（跳过 {sk}）"})
+
+    # 覆盖率（同一维度：执行结果）
+    if skip_api_tests:
+        gates.append({"id": "LINE_COVERAGE", "dimension": "执行结果",
+                      "verdict": "NOT_APPLICABLE", "detail": "--skip-api-tests：覆盖率不判定"})
     elif incr is None:
-        gates.append({"id": "LINE_COVERAGE", "verdict": "UNPROVEN",
+        gates.append({"id": "LINE_COVERAGE", "dimension": "执行结果",
+                      "verdict": "UNPROVEN",
                       "detail": "未提供 --jacoco + --base，增量覆盖率未验证"})
     else:
         line = incr["counters"].get("LINE")
         if not line or (line[0] + line[1]) == 0:
-            gates.append({"id": "LINE_COVERAGE", "verdict": "UNPROVEN",
+            gates.append({"id": "LINE_COVERAGE", "dimension": "执行结果",
+                          "verdict": "UNPROVEN",
                           "detail": "diff 与 JaCoCo 类无交集，增量覆盖率无法计算"})
         else:
             missed, covered = line
             pct_val = covered / (missed + covered) * 100
             ok = pct_val >= coverage_target
             gates.append({
-                "id": "LINE_COVERAGE",
+                "id": "LINE_COVERAGE", "dimension": "执行结果",
                 "verdict": "PASS" if ok else "BLOCK",
-                "detail": f"增量行覆盖率 {pct_val:.1f}%（门禁 ≥{coverage_target}%）",
+                "detail": f"增量行覆盖率 {pct_val:.1f}%（{profile} 档门禁 ≥{coverage_target}%）",
             })
 
-    # 3) TEST_EXECUTION —— 全部生成测试的真实执行结果（不只 test_api_）
-    if skip_api_tests:
-        gates.append({"id": "TEST_EXECUTION", "verdict": "NOT_APPLICABLE",
-                      "detail": "--skip-api-tests：执行层跳过"})
-    elif not junit:
-        gates.append({"id": "TEST_EXECUTION", "verdict": "UNPROVEN",
-                      "detail": "未提供 --junit，测试执行结果未验证"})
+    # ===== 维度 3：证据完整性 EVIDENCE_COMPLETENESS =====
+    missing_evidence = []
+    if not skip_api_tests:
+        if not junit:
+            missing_evidence.append("--junit")
+        if incr is None:
+            missing_evidence.append("--jacoco + --base")
+    if missing_evidence:
+        gates.append({"id": "EVIDENCE_COMPLETENESS", "dimension": "证据完整性",
+                      "verdict": "UNPROVEN",
+                      "detail": f"缺证据：{'、'.join(missing_evidence)}（UNPROVEN ≠ PASS）"})
     else:
-        p, f, sk, total = summarize_exec(junit)
-        if total == 0 or (p == 0 and f == 0):
-            gates.append({"id": "TEST_EXECUTION", "verdict": "UNPROVEN",
-                          "detail": f"junit 中无可执行用例（总数 {total}，跳过 {sk}）"})
-        elif f > 0:
-            gates.append({"id": "TEST_EXECUTION", "verdict": "BLOCK",
-                          "detail": f"{f} 个用例失败/错误（通过 {p}，跳过 {sk}，总数 {total}）"})
-        else:
-            gates.append({"id": "TEST_EXECUTION", "verdict": "PASS",
-                          "detail": f"{p}/{total} 通过（跳过 {sk}）"})
+        gates.append({"id": "EVIDENCE_COMPLETENESS", "dimension": "证据完整性",
+                      "verdict": "PASS", "detail": "执行结果与覆盖率证据齐备"})
 
-    # 4) GENERATED_ARTIFACT_INTEGRITY —— write-once manifest 校验（P0-5）
+    # ===== 维度 4：测试完整性 TEST_INTEGRITY（write-once + 意图完整）=====
     expected = (codegen_meta or {}).get("expected_outputs") or []
     if not expected:
-        gates.append({"id": "GENERATED_ARTIFACT_INTEGRITY", "verdict": "UNPROVEN",
-                      "detail": "无 write-once manifest（旧版生成），重跑 testing.design 后本项可验证"})
+        gates.append({"id": "TEST_INTEGRITY", "dimension": "测试完整性",
+                      "verdict": "UNPROVEN",
+                      "detail": "无 write-once manifest（旧版生成），重跑 testing.design 后可验证"})
     elif tests_root is not None:
         import hashlib as _hl
         problems = []
@@ -346,13 +409,21 @@ def evaluate_gates(issues: List[dict], junit: Dict[str, str] | None,
             elif _hl.sha256(fp.read_bytes()).hexdigest() != item.get("sha256"):
                 problems.append(f"手改 {item.get('path')}")
         if problems:
-            gates.append({"id": "GENERATED_ARTIFACT_INTEGRITY", "verdict": "BLOCK",
+            gates.append({"id": "TEST_INTEGRITY", "dimension": "测试完整性",
+                          "verdict": "BLOCK",
                           "detail": f"生成测试被改动/缺失 {len(problems)} 处（{'；'.join(problems[:3])}"
                                     f"{'…' if len(problems) > 3 else ''}）——write-once 纪律被破坏，"
                                     f"重跑 testing.design --force 恢复"})
+        elif intent_missing:
+            # 意图缺失：standard/strict 档视为不完整证据
+            gates.append({"id": "TEST_INTEGRITY", "dimension": "测试完整性",
+                          "verdict": "UNPROVEN" if profile == "fast" else "BLOCK",
+                          "detail": f"{len(intent_missing)} 个测试案例缺失意图说明"
+                                    f"（[意图]/Given/When/Then）"})
         else:
-            gates.append({"id": "GENERATED_ARTIFACT_INTEGRITY", "verdict": "PASS",
-                          "detail": f"{len(expected)} 个生成文件 hash 全部一致"})
+            gates.append({"id": "TEST_INTEGRITY", "dimension": "测试完整性",
+                          "verdict": "PASS",
+                          "detail": f"{len(expected)} 个生成文件 hash 一致且意图完整"})
     return gates
 
 
@@ -483,7 +554,8 @@ def check_consistency(spec: dict, code_apis: Set[str], test_cov: Dict[str, Set[s
         "rule_coverage": rule_cov,
         "api_target": 100,
         "rule_target": 100,
-        "line_coverage_target": 90,
+        # P0-4：覆盖率门槛不再硬编码，由 Quality Profile 决定
+        "line_coverage_target": profile_coverage(DEFAULT_PROFILE),
     }
 
 
@@ -515,6 +587,122 @@ def load_codegen_meta(tests_root: Path, explicit: str | None) -> dict | None:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
+
+
+# =====================================================================
+# P0-2：REQ → AC → TEST → EXECUTION → EVIDENCE 追溯矩阵
+# =====================================================================
+
+def build_traceability_matrix(spec: dict, test_cov: Dict[str, Set[str]],
+                              junit: Dict[str, str] | None,
+                              source_spec: str = "") -> List[dict]:
+    """每个契约条目（AC）一行，串起来源需求、派生测试、执行结果与证据状态。
+
+    证据状态推导（与全局三态一致）：
+      无测试 → BLOCK（漏测）；有测试未执行 → UNPROVEN；
+      执行失败 → BLOCK；执行通过 → PASS；执行被跳过 → UNPROVEN
+    """
+    rows: List[dict] = []
+    funcs = {fn.split("::")[-1]: fn for fn in test_cov.get("funcs", set())}
+
+    def evidence_of(func_names: list, has_test: bool) -> tuple:
+        if not has_test:
+            return "—（无测试）", "BLOCK"
+        if not junit:
+            return "未执行（缺 --junit）", "UNPROVEN"
+        matched = {f: junit[f] for f in func_names if f in junit}
+        if not matched:
+            return "未执行", "UNPROVEN"
+        p = sum(1 for s in matched.values() if s == "PASS")
+        f_ = sum(1 for s in matched.values() if s in ("FAIL", "ERROR"))
+        sk = sum(1 for s in matched.values() if s == "SKIP")
+        desc = f"通过 {p} / 失败 {f_} / 跳过 {sk}"
+        if f_ > 0:
+            return desc, "BLOCK"
+        if p == 0 and sk > 0:
+            return desc, "UNPROVEN"
+        return desc, "PASS"
+
+    # ---- apis ----
+    for a in spec.get("apis", []):
+        suffix = sct_ids.id_suffix(a["id"])
+        has_test = suffix in test_cov.get("apis", set())
+        names = [f for f in funcs if f.startswith(f"test_api_{suffix}_")]
+        exe, ev = evidence_of(names, has_test)
+        rows.append({
+            "req": a.get("derived_from") or source_spec,
+            "ac": a["id"], "kind": "API",
+            "desc": f"{a.get('method', '')} {a.get('path', '')}".strip(),
+            "test": f"test_api_{suffix}.py" if has_test else "—",
+            "execution": exe, "evidence": ev,
+        })
+
+    # ---- rules ----
+    for r in spec.get("rules", []):
+        func = sct_ids.rule_test_func(r["id"])
+        suffix = sct_ids.id_suffix(r["id"])
+        # 有 target 的规则生成 Java 单测 <Class>Test.java（区别于 Python test_br_*）
+        target_cls = (r.get("target") or {}).get("class", "") \
+            if isinstance(r.get("target"), dict) else ""
+        java_covered = False
+        if target_cls:
+            simple = target_cls.split(".")[-1]
+            java_covered = f"{simple}Test" in test_cov.get("java_tests", set())
+        has_test = java_covered \
+            or any(f"br_{suffix}" in k for k in test_cov.get("rules", set())) \
+            or func in funcs
+        # junit 里 Java 单测按类名（UpControllerTest）记录；Python 按函数名
+        java_cls = f"{target_cls.split('.')[-1]}Test" if (target_cls and java_covered) else ""
+        names = ([java_cls] if java_cls else []) + ([func] if not java_cls else [])
+        exe, ev = evidence_of(names, has_test)
+        test_label = (f"{target_cls.split('.')[-1]}Test.java" if java_covered
+                      else (f"test_rules.py::{func}" if has_test else "—"))
+        rows.append({
+            "req": r.get("derived_from") or source_spec,
+            "ac": r["id"], "kind": "RULE",
+            "desc": (r.get("text", "") or "")[:40],
+            "test": test_label,
+            "execution": exe, "evidence": ev,
+        })
+
+    # ---- acceptance scenarios ----
+    for feat in spec.get("features", []):
+        for sc in feat.get("acceptance_scenarios", []):
+            func = sct_ids.scenario_test_func(sc.get("id", ""))
+            has_test = sc.get("id") in test_cov.get("scenarios", set()) or func in funcs
+            exe, ev = evidence_of([func], has_test)
+            rows.append({
+                "req": f"{feat.get('id', '')} {feat.get('name', '')}".strip(),
+                "ac": sc.get("id", "?"), "kind": "SCENARIO",
+                "desc": (sc.get("then", "") or "")[:40],
+                "test": f"test_scenarios.py::{func}" if has_test else "—",
+                "execution": exe, "evidence": ev,
+            })
+    return rows
+
+
+def render_traceability_section(rows: List[dict]) -> List[str]:
+    """追溯矩阵渲染为 markdown 行"""
+    L = ["## 需求追溯矩阵（REQ → AC → TEST → EXECUTION → EVIDENCE）", ""]
+    if not rows:
+        L.append("> 契约中没有可追溯的条目。")
+        L.append("")
+        return L
+    counts = {v: sum(1 for r in rows if r["evidence"] == v)
+              for v in ("PASS", "BLOCK", "UNPROVEN")}
+    L.append(f"> 共 {len(rows)} 条契约条目：证据 PASS {counts['PASS']} · "
+             f"BLOCK {counts['BLOCK']} · UNPROVEN {counts['UNPROVEN']}。"
+             f"BLOCK/UNPROVEN 条目即需要人工处置的缺口。")
+    L.append("")
+    L.append("| REQ 来源 | AC ID | 类型 | 说明 | TEST | EXECUTION | EVIDENCE |")
+    L.append("|----------|-------|------|------|------|-----------|----------|")
+    icon = {"PASS": "✅", "BLOCK": "❌", "UNPROVEN": "⚠️"}
+    for r in rows:
+        L.append(f"| {r['req'] or '—'} | {r['ac']} | {r['kind']} | {r['desc']} "
+                 f"| `{r['test']}` | {r['execution']} "
+                 f"| {icon.get(r['evidence'], '')} {r['evidence']} |")
+    L.append("")
+    return L
 
 
 # =====================================================================
@@ -591,22 +779,30 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
     if junit:
         api_pass, api_fail, api_skip, api_total = summarize_exec(junit_status_by_prefix(junit, "test_api_"))
 
-    # ===== 1. 执行摘要（三态门禁：UNPROVEN ≠ PASS）=====
+    # ===== 1. 执行摘要（四维证据 × 三态门禁，P0-3）=====
     verdict = overall_verdict(gates)
     L.append("## 1. 执行摘要")
     L.append("")
-    L.append("| 证据项 | 判定 | 说明 |")
-    L.append("|--------|------|------|")
+    L.append("> Quality Profile（P0-4）：**`" + (meta.get("profile", DEFAULT_PROFILE)) + "`** 档"
+             "（覆盖率门禁 ≥ " + str(meta.get("profile_coverage", 90)) + "%）")
+    L.append("")
+    L.append("| 维度 | 证据项 | 判定 | 说明 |")
+    L.append("|------|--------|------|------|")
     for g in gates:
-        L.append(f"| {g['id']} | {VERDICT_ICON[g['verdict']]} | {g['detail']} |")
+        L.append(f"| {g.get('dimension', '—')} | {g['id']} | {VERDICT_ICON[g['verdict']]} | {g['detail']} |")
     if cg_src:
-        L.append(f"| 字段级漂移 (FIELD_DRIFT) | ➖ 参考 | {len(cg_drifts)} 个（建议 0，不阻塞放行） |")
-    L.append(f"| **总结论** | **{VERDICT_ICON[verdict]}** | 取全部证据项最严判定 |")
+        L.append(f"| — | 字段级漂移 (FIELD_DRIFT) | ➖ 参考 | {len(cg_drifts)} 个（建议 0，不阻塞放行） |")
+    L.append(f"| **—** | **总结论** | **{VERDICT_ICON[verdict]}** | 取全部证据项最严判定 |")
     L.append("")
     if verdict == "UNPROVEN":
         L.append("> ⚠️ **UNPROVEN 不是 PASS**：存在未验证的证据项（见上表），"
                  "补齐证据（--junit / --jacoco + --base）后重跑方可放行。")
         L.append("")
+
+    # ===== 1.5 需求追溯矩阵（P0-2：REQ → AC → TEST → EXECUTION → EVIDENCE）=====
+    source_spec = (spec.get("_meta") or {}).get("source_spec", "") or meta.get("spec", "")
+    trace_rows = build_traceability_matrix(spec, test_cov, junit, source_spec)
+    L.extend(render_traceability_section(trace_rows))
 
     # ===== 2. JaCoCo =====
     L.append("## 2. JaCoCo 代码覆盖率")
@@ -865,7 +1061,7 @@ def print_summary(issues: List[dict], stats: dict, report_path: str | None,
         print(f"发现 {len(issues)} 个漂移（HIGH {high_count} 个），详见报告")
     if gates:
         for g in gates:
-            print(f"  [{VERDICT_ICON[g['verdict']]}] {g['id']}: {g['detail']}")
+            print(f"  [{VERDICT_ICON[g['verdict']]}] [{g.get('dimension', '—')}] {g['id']}: {g['detail']}")
     print(f"\n总结论: {VERDICT_ICON.get(verdict, verdict)}")
     if report_path:
         print(f"📄 详细测试报告: {report_path}")
@@ -946,6 +1142,9 @@ def main():
                              "只跑规则测试 + 覆盖率 + 漂移门禁，避免阻塞。")
     parser.add_argument("--skip-rule-tests", action="store_true",
                         help="跳过规则测试层（test_rules.py / Java 单测）；用于只关心 API 层的场景")
+    parser.add_argument("--profile", default=DEFAULT_PROFILE,
+                        help="Quality Profile（P0-4）：fast|standard|strict——"
+                             "决定覆盖率门槛与测试完整性要求（默认 standard=90%）")
     parser.add_argument("--prereq-timeout", type=float, default=3.0,
                         help="API 测试预检 BASE_URL 可达性的超时（秒），默认 3")
     parser.add_argument("--module", default="",
@@ -1002,15 +1201,27 @@ def main():
         print(f"CodeGraph: {'已接入（' + cg + '）' if cg else '未接入'}，"
               f"FIELD_DRIFT {n} 个，派生异常用例 {d} 个，系统级异常 {g} 个（将整合进测试报告）")
 
+    # P0-4：Quality Profile 决定覆盖率门槛（在 meta 构造之前确定）
+    profile = (args.profile or DEFAULT_PROFILE).lower()
+    if profile not in PROFILES:
+        print(f"⚠️  未知 profile `{profile}`，回退 {DEFAULT_PROFILE}（可选: {'/'.join(PROFILES)}）")
+        profile = DEFAULT_PROFILE
+    coverage_target = profile_coverage(profile)
+
     meta = {"spec": args.spec, "code": str(code_root), "tests": args.tests,
             "base": args.base if jacoco else "N/A", "jacoco": args.jacoco or "",
             "mode": mode, "codegen_meta": codegen_meta,
-            "impact": args.impact or "", "report": args.report or ""}
+            "impact": args.impact or "", "report": args.report or "",
+            "profile": profile, "profile_coverage": coverage_target}
 
-    # 三态门禁评估（P0-2 修复：覆盖率与全部测试执行结果必须参与判定）
-    gates = evaluate_gates(issues, junit, incr, stats["line_coverage_target"],
+    # 契约追溯矩阵（P0-2）→ 四维门禁评估（P0-3）
+    source_spec = (spec.get("_meta") or {}).get("source_spec", "") or args.spec
+    trace_rows = build_traceability_matrix(spec, test_cov, junit, source_spec)
+    gates = evaluate_gates(issues, junit, incr, coverage_target,
                            skip_api_tests=args.skip_api_tests,
-                           tests_root=Path(args.tests), codegen_meta=codegen_meta)
+                           tests_root=Path(args.tests), codegen_meta=codegen_meta,
+                           trace_rows=trace_rows, intent_missing=intent_missing,
+                           profile=profile)
     verdict = overall_verdict(gates)
 
     # 落盘详细报告 + 终端摘要

@@ -23,6 +23,16 @@ testing.plan  →  testing.design  →  testing.run
 | Evidence | `--junit` (execution results) and `--jacoco` + `--base` (coverage) — **without these the verdict is UNPROVEN, not PASS** |
 
 ## Step 1 — Execute and gate
+### Step 0.5 — Validate the contract (P0-1)
+
+> **契约校验（v2.1 起，P0-1）**：契约进入下游前必须通过确定性校验
+> （结构 + ID 唯一性 + 格式）。BLOCK 时先修契约，不要带着坏契约往下走。
+>
+> ```bash
+> python $SCT_EXT_HOME/scripts/contract-validate.py --contract specs/{feature}/acceptance.yaml
+> # 退出码 0=PASS 1=BLOCK 2=UNPROVEN；--json <path> 可落结构化结果
+> ```
+
 
 ```bash
 python $SCT_EXT_HOME/scripts/consistency-check.py \

@@ -39,7 +39,7 @@ import sct_ids
 from datetime import datetime
 
 # 生成器版本：写入 _codegen_meta.json，manifest 校验时若版本不符则强制再生成
-GENERATOR_VERSION = "2.0.0"
+GENERATOR_VERSION = "2.1.0"
 
 
 def sha256_file(path: Path) -> str:
@@ -1830,8 +1830,13 @@ def main():
     for f in all_outputs:
         fp = Path(f)
         if fp.exists():
+            # 记录相对 out_dir 的路径（Java 单测带包路径，如 com/demo/UpControllerTest.java）
+            try:
+                rel = str(fp.resolve().relative_to(out_dir.resolve())).replace("\\", "/")
+            except ValueError:
+                rel = fp.name
             manifest.append({
-                "path": fp.name,
+                "path": rel,
                 "sha256": hashlib.sha256(fp.read_bytes()).hexdigest(),
             })
     codegen_meta["expected_outputs"] = manifest

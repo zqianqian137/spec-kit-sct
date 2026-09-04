@@ -1,0 +1,154 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/zqianqian137/spec-kit-sct/blob/main/templates/acceptance-schema.json",
+  "title": "SCT Acceptance Contract",
+  "description": "需求与测试之间的标准契约（acceptance.yaml）。期望结果只写在这里，绝不由代码反推。",
+  "type": "object",
+  "required": ["version"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "契约版本。当前仅 1。"
+    },
+    "feature": {
+      "type": "string",
+      "description": "Feature 标识，默认从 spec.md 推断。"
+    },
+    "_meta": {
+      "type": "object",
+      "description": "元数据：来源、覆盖模式、测试时序。",
+      "additionalProperties": true,
+      "properties": {
+        "source_spec": { "type": "string" },
+        "coverage_mode": { "enum": ["full", "incremental"] },
+        "test_timing": { "enum": ["post", "pre"] }
+      }
+    },
+    "features": {
+      "type": "array",
+      "description": "功能与验收场景（来源：spec.md）。",
+      "items": {
+        "type": "object",
+        "required": ["id", "acceptance_scenarios"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^F[0-9]{3}$",
+            "description": "功能 ID，格式 F{3位序号}，如 F001。"
+          },
+          "name": { "type": "string" },
+          "acceptance_scenarios": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "given", "when", "then"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^F[0-9]{3}-[0-9]+$",
+                  "description": "场景 ID，格式 F{3位}-{序号}，如 F001-1。"
+                },
+                "given": { "type": "string" },
+                "when": { "type": "string" },
+                "then": { "type": "string" },
+                "e2e": {
+                  "type": "object",
+                  "description": "e2e 场景配置（可选）。",
+                  "properties": {
+                    "priority": { "enum": ["P0", "P1", "P2"] },
+                    "case_type": { "enum": ["positive", "negative", "正例", "反例"] },
+                    "action": { "type": "object" },
+                    "assertion": { "type": "object" },
+                    "pre_steps": { "type": "array" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "apis": {
+      "type": "array",
+      "description": "接口/契约（来源：api-contracts.md / plan.md）。协议无关：契约声明验证什么，adapter 决定怎么驱动。",
+      "items": {
+        "type": "object",
+        "required": ["id", "method", "path"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^API-",
+            "description": "接口 ID，前缀 API-；可多段（API-F003-001），末段唯一。"
+          },
+          "name": { "type": "string" },
+          "method": {
+            "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+            "description": "HTTP 方法；非 HTTP 契约可用自定义值。"
+          },
+          "path": { "type": "string" },
+          "request": {
+            "type": "object",
+            "properties": {
+              "body": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "type": { "type": "string" },
+                    "required": { "type": "boolean" },
+                    "example": {}
+                  }
+                }
+              }
+            }
+          },
+          "response_200": { "type": "object" },
+          "response": { "type": "object" },
+          "error_codes": { "type": "array" },
+          "errors": { "type": "array" }
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "description": "业务规则（来源：data-model.md / spec.md）。",
+      "items": {
+        "type": "object",
+        "required": ["id", "text"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^BR-",
+            "description": "规则 ID，前缀 BR-；可多段（BR-F003-001），末段唯一。"
+          },
+          "text": { "type": "string" },
+          "priority": { "enum": ["P0", "P1", "P2"] },
+          "derived_from": { "type": "string" },
+          "target": {
+            "type": "object",
+            "description": "单测锚点（class/method），指向被测实现。"
+          },
+          "test_cases": {
+            "type": "array",
+            "description": "输入值与断言期望——期望的唯一来源，不得从代码反推。",
+            "items": {
+              "type": "object",
+              "properties": {
+                "inputs": { "type": "object" },
+                "expect": {},
+                "given": { "type": "object" }
+              }
+            }
+          },
+          "checks": {
+            "type": "array",
+            "description": "离线静态锚点（annotation/method/exception/constant/text）。"
+          }
+        }
+      }
+    }
+  }
+}

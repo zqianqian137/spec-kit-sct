@@ -3,6 +3,40 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.1.0] - 2026-09-04
+
+### Added — P0 全部落地（Contract + Traceability + Evidence + Gate）
+
+**P0-1 Contract**：`acceptance.yaml` 从「yaml.safe_load 就读进来」升级为标准契约
+- 新增 `templates/acceptance-schema.json`（契约 JSON Schema：版本/ID 格式/字段约束）
+- 新增 `scripts/contract-validate.py`（零依赖确定性校验：结构 + ID 唯一性 + ID 格式 + 完整性提示，
+  三态 PASS/BLOCK/UNPROVEN）；plan / design / run 三个命令文件已接入
+
+**P0-2 Traceability**：报告新增固定章节「需求追溯矩阵（REQ → AC → TEST → EXECUTION → EVIDENCE）」——
+每条契约条目（API/RULE/SCENARIO）追溯到测试、执行结果与证据状态（含 Java 单测 `<Class>Test.java` 识别）
+
+**P0-3 Evidence**：门禁重构为**四维证据**：需求覆盖 / 执行结果 / 证据完整性 / 测试完整性，
+终端摘要与报告均按「维度 × 证据项」展示
+
+**P0-4 Quality Profile**：`--profile fast(70%) / standard(90%) / strict(95%)` 替代硬编码 90%，
+strict 档把意图缺失视为 BLOCK
+
+### Added — P1 自测 + golden fixtures（scripts/self-test.py）
+
+- 三档回归：golden（合法契约全链路 PASS）/ blocker（重复 ID 契约被拒）/ gate（漏测契约可跑）
+- 已捕获并修复 2 个真实缺陷：① manifest 记录 Java 单测只记文件名（带包路径找不到 → 误 BLOCK），
+  改为记录相对 out_dir 路径；② 追溯矩阵不识别 Java 单测（有 target 的规则误判漏测），
+  新增 java_tests 收集 + `<Class>Test.java` 匹配
+
+### Fixed
+
+- 代码减法阶段误删函数的风险点已在自测中覆盖（golden 链路兜底）
+
+### Docs
+
+- ROADMAP：P0 四件事标 ✅，P1 自测 ✅ + 两个架构重构标 ⏸ 设计预留（如实标注，不假装完成）
+- 方法论评估：新增 `docs/methodology-assessment.md`（v2.1.0 对照 2.0 目标的完整评估）
+
 ## [2.0.0] - 2026-09-04
 
 ### Changed — SCT 2.0 定位升级：Spec → Test → Evidence → Quality Gate
