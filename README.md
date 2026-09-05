@@ -226,7 +226,7 @@ for a human reviewer:
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.3.0.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.4.0.zip
 ```
 
 Or install from a local checkout during development:
@@ -371,6 +371,15 @@ fixes must trace back to the requirement — the test is the alarm, not the verd
 
 ## Notes
 
+- **运行前置**：Python ≥ 3.10 + PyYAML（`pip install pyyaml`）。`self-test.py` 启动时做环境探针，
+  缺依赖会给明确报错而不是半路失败。L1 层需 Maven/Gradle（`mvn test` + JaCoCo）；
+  L2/L3 为 pytest 执行（`pip install pytest requests`）。
+- **契约校验已命令级强制（v2.4）**：`testing.run`（consistency-check.py）入口内置
+  `contract-validate`——坏契约直接 BLOCK(exit 1)，绕过命令直调脚本也拦得住；
+  不再依赖"先跑 contract-validate"的约定。
+- **追溯矩阵可结构化导出（v2.4）**：`testing.run --trace-json <path>` 输出
+  `{source_spec, profile, verdict, gates[], items[]}` JSON，CI / 看板可直接消费，
+  不再只依赖 markdown 报告表格。
 - Tests are **write-once**: change the test plan, then regenerate — do not hand-edit  
   generated tests.
 - Brownfield incremental mode: set `_meta.coverage_mode: incremental` in the  

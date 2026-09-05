@@ -120,3 +120,35 @@ Traceability / Gate** 三件事；测试生成（JUnit / HTTP / E2E / Golden / B
 > 搁置"为可插拔而做"的 Step 1-2，把主线收在**测试不遗漏 + 测试到位**——四维门禁（不遗漏）
 > 之上叠加可选「测试有效性」维度（防空洞），并用第 4 档 self-test 反例锁死。
 > 评估结论不变：方法论方向正确，内核（契约 + 追溯 + 裁决）由代码强制、更不可替代。
+
+---
+
+## 九、v2.4.0 回访：内网工程级收口（2026-09-05）
+
+### 9.1 遗留风险落地
+
+| 风险/建议（§五/§六/§8.3） | v2.4.0 状态 |
+|---|---|
+| 契约校验"脚本级接入而非命令级强制"（风险 2 / 建议 1） | ✅ consistency-check 入口内置 contract-validate，坏契约直接 BLOCK——**命令级强制达成** |
+| 追溯矩阵 JSON 导出（建议 3） | ✅ `--trace-json <path>` |
+| self-test 更多反例（建议 4） | ✅ 新增 2 档：坏契约直调门禁 → CONTRACT BLOCK；trace.json 可解析断言 |
+
+### 9.2 全链路演练发现并修复的缺陷
+
+演练中撞出 codegen 一个静默缺陷：目标方法签名**零参数**而 SoT `inputs` 非空时，
+生成 `upload(arg0)`（必然编译失败）且无 drift——与"分歧是信号"原则相悖。
+已修复：报 `SIGNATURE_MISMATCH` BINDING_DRIFT + 生成可编译的诚实调用。
+
+### 9.3 演练证据（本机全链路，门禁 PASS exit 0）
+
+contract-validate PASS → codegen 三层派生（L1 JUnit / L2 HTTP / L3 场景）→
+L1 `mvn test` 真实执行 1/1 通过 + JaCoCo 增量行覆盖 100%（standard ≥90%）→
+L2 pytest 对活服务 2/2 通过 → L3 场景 1/1 通过 → 六维门禁全 PASS。
+演练同时复验了门禁的诚实性：无 Maven/无 JaCoCo 时如实 UNPROVEN、
+代码删掉 API 映射时如实 MISSING_IMPL BLOCK——**BLOCK/UNPROVEN 不是故障，是产品**。
+
+### 9.4 剩余缺口（如实标注）
+
+- 弱断言检测仍缺（人工评审兜底，维持 v1.5 删除变异测试的决策）；
+- 全量覆盖率不在门禁内（incremental 设计取舍，不变）；
+- L3 e2e 依赖 Playwright + 真实前端环境，本机未覆盖浏览器层执行。

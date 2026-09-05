@@ -1,2 +1,9 @@
 __pycache__/
 *.pyc
+
+# 内部介绍材料（不入库）
+SCT介绍材料.md
+SCT内网实践操作手册.md
+
+# 本地测试/演练 scratch（不入库）
+/src/

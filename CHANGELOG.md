@@ -3,6 +3,41 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.4.0] - 2026-09-05
+
+### Added — 内网工程级收口（全链路演练验证：门禁 PASS）
+
+**全链路演练**（contract → codegen 三层派生 → L1 `mvn test`+JaCoCo 真实执行 →
+L2 pytest 对活服务执行 → L3 场景执行 → 六维门禁 **PASS(exit 0)**），期间发现并修复
+1 个 codegen 缺陷：
+
+- `acceptance-codegen.py`：目标方法公共签名**零参数**而 SoT `inputs` 非空时，原先静默把
+  参数硬塞进调用（`upload(arg0)`，必然编译失败）且无任何 drift。现报
+  **`SIGNATURE_MISMATCH`** BINDING_DRIFT 并生成可编译的诚实调用，交人工裁决。
+
+### Changed — 契约校验命令级强制（P0 遗留风险收口）
+
+- `consistency-check.py`（`testing.run`）入口内置 `contract-validate.validate`：
+  坏契约（结构错误/重复 ID）直接 **BLOCK(exit 1)**，绕过命令直调脚本也拦得住——
+  消掉方法论评估中的风险 2（"脚本级接入而非命令级强制"）。
+
+### Added — 追溯矩阵结构化导出
+
+- `testing.run --trace-json <path>`：输出 `{source_spec, profile, verdict, gates[], items[]}`，
+  CI / 看板可直接消费（原只有 markdown 报告表格）。
+
+### Changed — self-test 环境探针 + 新断言
+
+- 启动探针：Python ≥ 3.10（脚本使用 `X | Y` 类型标注）+ PyYAML，缺失给明确报错退出 2，
+  不再半路难排查失败；
+- 新增 2 档断言：坏契约直调门禁 → 入口 CONTRACT BLOCK；golden `--trace-json`
+  可解析且 verdict=PASS。
+
+### Removed — 仓库卫生
+
+- 移除内部材料《SCT介绍材料》《SCT内网实践操作手册》（本地保留，`.gitignore` 已忽略）；
+  本地演练 scratch `src/` 同样忽略。
+
 ## [2.3.0] - 2026-09-04
 
 ### Changed — 路线纠偏：v3.0 主线 = 防漏测 / 防空洞收口（用户拍板）

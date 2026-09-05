@@ -1,7 +1,7 @@
 {
   "name": "Spec-Code-Test Consistency (SCT)",
   "id": "sct",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Verification kernel for Spec Kit: owns the Evidence Contract (acceptance.yaml), the REQ->AC->TEST->EXECUTION->EVIDENCE traceability chain, and the deterministic PASS/BLOCK/UNPROVEN gate. Test generation (JUnit / HTTP / E2E / Golden / BDD) plugs in via adapters - the kernel produces the verdict, never the tests.",
   "author": "zqianqian137",
   "download_url": "https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.3.0.zip",

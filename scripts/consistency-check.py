@@ -69,6 +69,16 @@ from pathlib import Path
 import sct_ids
 from typing import Dict, List, Set, Tuple
 
+
+def _load_contract_validate():
+    """加载同目录 contract-validate.py（文件名带连字符，不能普通 import）。"""
+    import importlib.util as _ilu
+    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "contract-validate.py")
+    _s = _ilu.spec_from_file_location("sct_contract_validate", _p)
+    _m = _ilu.module_from_spec(_s)
+    _s.loader.exec_module(_m)
+    return _m
+
 # JaCoCo 计数器类型 → 中文名（只取报告关注的三个维度）
 JACOCO_TYPES = [("INSTRUCTION", "指令 (INSTRUCTION)"), ("LINE", "行 (LINE)"), ("METHOD", "方法 (METHOD)")]
 
@@ -1248,9 +1258,26 @@ def main():
                         help="开启编译门 COMPILE（mvn/gradle test-compile）；内网无构建环境时勿开")
     parser.add_argument("--compile-timeout", type=int, default=300,
                         help="编译门超时（秒），默认 300")
+    parser.add_argument("--trace-json",
+                        help="追溯矩阵 + 门禁结论的结构化 JSON 输出路径（CI/看板可消费）")
     args = parser.parse_args()
 
     spec = load_acceptance(Path(args.spec))
+
+    # v2.4：契约校验命令级强制（P0 遗留风险收口）——不再依赖命令文件约定
+    # 「先跑 contract-validate」，坏契约在门禁入口直接 BLOCK（退出码 1）。
+    cv_problems, cv_warnings = _load_contract_validate().validate(
+        spec if isinstance(spec, dict) else {})
+    if cv_warnings:
+        for w in cv_warnings:
+            print(f"⚠️  契约完整性提示: {w}")
+    if cv_problems:
+        print("=" * 60)
+        print("❌ CONTRACT 校验 BLOCK——契约存在结构性错误，门禁入口直接阻断")
+        for x in cv_problems:
+            print(f"  - {x}")
+        print("=" * 60)
+        sys.exit(1)
     # F-17：--module 时源码根 = {code}/{module}/{module_src or 'src/main/java'}
     if args.module:
         code_root = (Path(args.code) / args.module
@@ -1334,6 +1361,20 @@ def main():
         rp.parent.mkdir(parents=True, exist_ok=True)
         rp.write_text(report, encoding="utf-8")
         report_path = str(rp)
+
+    # v2.4：追溯矩阵 JSON 导出（--trace-json）——CI/看板可直接消费，
+    # 不再只依赖 markdown 报告表格
+    if args.trace_json:
+        payload = {
+            "source_spec": source_spec, "profile": profile,
+            "coverage_target": coverage_target, "verdict": verdict,
+            "gates": gates, "items": trace_rows,
+        }
+        tj = Path(args.trace_json)
+        tj.parent.mkdir(parents=True, exist_ok=True)
+        tj.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+                      encoding="utf-8")
+        print(f"📄 追溯矩阵 JSON: {tj}")
 
     sys.exit(print_summary(issues, stats, report_path, verdict, gates))
 

@@ -1066,10 +1066,16 @@ def _render_java_test_class(rules: list, junit_version: str, class_info: dict = 
                         arg_vars.append(vname)
                     call = f"service.{m}({', '.join(arg_vars)})"
                 elif isinstance(inputs, dict) and inputs:
-                    arg_vars = [f"arg{i}" for i in range(len(inputs))]
-                    for i, (k, v) in enumerate(inputs.items()):
-                        arrange.append(f"        Object arg{i} = {_java_value(v)};")
-                    call = f"service.{m}({', '.join(arg_vars)})"
+                    # 方法存在但公共签名零参数，SoT 却给了 inputs——签名分歧，
+                    # 报 BINDING_DRIFT 交人工裁决；不把参数硬塞进调用（会编译失败）
+                    binding_drifts.append({
+                        "rule": rid, "class": cls_full, "method": m,
+                        "kind": "SIGNATURE_MISMATCH",
+                        "detail": f"方法 {cls_full}.{m}() 公共签名无参数，"
+                                  f"SoT test_cases.inputs 却提供了 {list(inputs.keys())}——"
+                                  f"请确认参数是否已被移除（改 SoT）或实现缺失（改代码）",
+                    })
+                    call = f"service.{m}()"
                 elif isinstance(inputs, list):
                     arg_vars = [f"arg{i}" for i in range(len(inputs))]
                     for i, v in enumerate(inputs):
