@@ -769,6 +769,11 @@ def build_traceability_matrix(spec: dict, test_cov: Dict[str, Set[str]],
     rows: List[dict] = []
     funcs = {fn.split("::")[-1]: fn for fn in test_cov.get("funcs", set())}
 
+    def _file_of_func(func: str) -> str:
+        """函数名 → 实际所在测试文件名（证据标签精确到文件，v2.5.2）。"""
+        full = funcs.get(func, "")
+        return full.split("::")[0] if "::" in full else ""
+
     def evidence_of(func_names: list, has_test: bool) -> tuple:
         if not has_test:
             return "—（无测试）", "BLOCK"
@@ -818,8 +823,10 @@ def build_traceability_matrix(spec: dict, test_cov: Dict[str, Set[str]],
         java_cls = java_cls_name if java_covered else ""
         names = ([java_cls] if java_cls else []) + ([func] if not java_cls else [])
         exe, ev = evidence_of(names, has_test)
+        # 证据标签指向函数实际所在文件（test_unit_py.py 或 test_rules.py 静态层）
+        py_label = _file_of_func(func) or sct_ids.RULES_FALLBACK_FILENAME
         test_label = (f"{java_cls_name}.java" if java_covered
-                      else (f"{sct_ids.RULES_FALLBACK_FILENAME}::{func}" if has_test else "—"))
+                      else (f"{py_label}::{func}" if has_test else "—"))
         rows.append({
             "req": r.get("derived_from") or source_spec,
             "ac": r["id"], "kind": "RULE",
@@ -834,11 +841,13 @@ def build_traceability_matrix(spec: dict, test_cov: Dict[str, Set[str]],
             func = sct_ids.scenario_test_func(sc.get("id", ""))
             has_test = sc.get("id") in test_cov.get("scenarios", set()) or func in funcs
             exe, ev = evidence_of([func], has_test)
+            # 证据标签指向函数实际所在文件（v2.5.2，与 RULE 行同规则）
+            sc_label = _file_of_func(func) or "test_scenarios.py"
             rows.append({
                 "req": f"{feat.get('id', '')} {feat.get('name', '')}".strip(),
                 "ac": sc.get("id", "?"), "kind": "SCENARIO",
                 "desc": (sc.get("then", "") or "")[:40],
-                "test": f"test_scenarios.py::{func}" if has_test else "—",
+                "test": f"{sc_label}::{func}" if has_test else "—",
                 "execution": exe, "evidence": ev,
             })
     return rows
@@ -876,9 +885,11 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
                        jacoco: dict | None, incr: dict | None,
                        junit: Dict[str, str] | None, impact_pri: Dict[str, str],
                        test_cov: Dict[str, Set[str]], intent_missing: List[str],
-                       intent_total: int, meta: dict, gates: List[dict]) -> Tuple[str, str]:
+                       intent_total: int, meta: dict, gates: List[dict],
+                       declarations: List[str] | None = None) -> Tuple[str, str]:
     """渲染详细测试报告 markdown → (报告文本, 三态结论 PASS/BLOCK/UNPROVEN)"""
     now = datetime.now().isoformat(timespec="seconds")
+    declarations = declarations or []
     apis = spec.get("apis", [])
     rules = spec.get("rules", [])
     high = [i for i in issues if i["severity"] == "HIGH"]
@@ -949,6 +960,17 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
     L.append("> Quality Profile（P0-4）：**`" + (meta.get("profile", DEFAULT_PROFILE)) + "`** 档"
              "（覆盖率门禁 ≥ " + str(meta.get("profile_coverage", 90)) + "%）")
     L.append("")
+    # v2.5.2 可信度分级（呈现层）：声明范围/盲区让"证据 PASS"与"范围 PASS"可区分，
+    # 不改变任何判定逻辑与退出码
+    if declarations:
+        L.append("> **范围声明**（本次结论含以下声明，评审时请先读）：")
+        L.append(">")
+        for d in declarations:
+            L.append(f"> - {d}")
+        if verdict == "PASS":
+            L.append("> - ⚠️ 本次 PASS 为**含声明的 PASS**：被声明跳过/降级的维度没有证据，"
+                     "不等于已验证。")
+        L.append("")
     L.append("| 维度 | 证据项 | 判定 | 说明 |")
     L.append("|------|--------|------|------|")
     for g in gates:
@@ -1232,7 +1254,8 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
 
 
 def print_summary(issues: List[dict], stats: dict, report_path: str | None,
-                  verdict: str, gates: List[dict] | None = None):
+                  verdict: str, gates: List[dict] | None = None,
+                  declarations: List[str] | None = None):
     """终端摘要（详细内容看报告文件）；返回三态退出码 0/1/2"""
     print("=" * 60)
     print("三方一致性校验摘要（三态门禁）")
@@ -1247,7 +1270,15 @@ def print_summary(issues: List[dict], stats: dict, report_path: str | None,
     if gates:
         for g in gates:
             print(f"  [{VERDICT_ICON[g['verdict']]}] [{g.get('dimension', '—')}] {g['id']}: {g['detail']}")
+    # v2.5.2 可信度分级（呈现层）：声明范围让 PASS 的证据成色可读，不改判定/退出码
+    declarations = declarations or []
+    if declarations:
+        print(f"\n范围声明（{len(declarations)} 项，被声明跳过/降级的维度没有证据）：")
+        for d in declarations:
+            print(f"  ⚑ {d}")
     print(f"\n总结论: {VERDICT_ICON.get(verdict, verdict)}")
+    if verdict == "PASS" and declarations:
+        print("      （含声明范围——被声明维度的缺口不在此体现，评审请先读范围声明）")
     if report_path:
         print(f"📄 详细测试报告: {report_path}")
     return verdict_exit_code(verdict)
@@ -1425,6 +1456,17 @@ def main():
         profile = DEFAULT_PROFILE
     coverage_target = profile_coverage(profile)
 
+    # v2.5.2 可信度分级：收集声明范围/盲区（呈现层——进报告 §1、终端摘要与 trace.json，
+    # 让"证据 PASS"与"范围 PASS"可区分；不改变任何判定与退出码）
+    declarations: List[str] = []
+    if args.skip_api_tests:
+        declarations.append("--skip-api-tests：接口层执行与覆盖率维度不判定（声明范围）")
+    if args.skip_rule_tests:
+        declarations.append("--skip-rule-tests：单测层跳过，真实执行数不判定（声明范围）")
+    if ((spec.get("_meta") or {}).get("impl_evidence") or "routes").lower() == "none":
+        declarations.append("impl_evidence=none：路由级实现核对降级为人工核对（声明盲区，"
+                            "接口层真实执行证据仍然把关）")
+
     meta = {"spec": args.spec, "code": str(code_root), "tests": args.tests,
             "base": args.base if jacoco else "N/A", "jacoco": args.jacoco or "",
             "mode": mode, "codegen_meta": codegen_meta,
@@ -1451,7 +1493,8 @@ def main():
     if args.report:
         report, verdict = render_test_report(
             spec, issues, stats, jacoco, incr, junit, impact_pri,
-            test_cov, intent_missing, intent_total, meta, gates)
+            test_cov, intent_missing, intent_total, meta, gates,
+            declarations=declarations)
         rp = Path(args.report)
         rp.parent.mkdir(parents=True, exist_ok=True)
         rp.write_text(report, encoding="utf-8")
@@ -1465,6 +1508,7 @@ def main():
             "coverage_target": coverage_target, "verdict": verdict,
             "gates": gates, "items": trace_rows,
             "binding_drifts": (codegen_meta or {}).get("binding_drifts") or [],
+            "declarations": declarations,
         }
         tj = Path(args.trace_json)
         tj.parent.mkdir(parents=True, exist_ok=True)
@@ -1472,7 +1516,8 @@ def main():
                       encoding="utf-8")
         print(f"📄 追溯矩阵 JSON: {tj}")
 
-    sys.exit(print_summary(issues, stats, report_path, verdict, gates))
+    sys.exit(print_summary(issues, stats, report_path, verdict, gates,
+                           declarations=declarations))
 
 
 if __name__ == "__main__":

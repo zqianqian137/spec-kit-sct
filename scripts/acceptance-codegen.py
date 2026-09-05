@@ -1264,11 +1264,13 @@ def gen_java_unit_tests(rules: list, java_test_root: str, junit_version: str,
 # =====================================================================
 
 def _gen_python_rule_fallbacks(rules: list, out_dir: Path,
-                               code_root: str = "backend/src/main/java") -> list:
+                               code_root: str = "backend/src/main/java",
+                               unit_layer_note: str = "") -> list:
     """为缺少 target+test_cases 锚点的规则生成 Python 离线静态断言（fallback）
 
-    当所有规则都有 Java 锚点时，本函数生成一个空的 test_rules.py 含说明，
-    避免 pytest 报 "no tests ran"。
+    当所有规则都有锚点时，本函数生成一个空的 test_rules.py 含说明，
+    避免 pytest 报 "no tests ran"。unit_layer_note 描述本工程单测层由谁承载
+    （v2.5.2 起按 --lang 探测结果生成，避免 Java 优先措辞出现在 Python 工程）。
     """
     generated = []
     cr = str(code_root).replace("\\", "/")
@@ -1278,7 +1280,8 @@ def _gen_python_rule_fallbacks(rules: list, out_dir: Path,
     L.append('执行机制: 离线静态断言（无需启动服务）——验证 SoT 登记的每条业务规则')
     L.append('在代码中有对应落地证据（注解/方法/异常/常量）。')
     L.append("")
-    L.append('说明：单测层首选 JUnit + Mockito 的 Java 测试（gen_java_unit_tests）。')
+    L.append('说明：' + (unit_layer_note
+             or '单测层首选 JUnit + Mockito 的 Java 测试（gen_java_unit_tests）。'))
     L.append('本文件仅作为 fallback，对没有 target+test_cases 锚点的规则做声明存在性扫描。')
     L.append('推荐做法：在 SoT 的 rules[].target.class/method/test_cases 提供完整 Java 锚点，')
     L.append('本文件将退化为仅含说明的空 pytest 文件。')
@@ -1371,7 +1374,7 @@ def _gen_python_rule_fallbacks(rules: list, out_dir: Path,
                 L.append("            found_any = True")
                 L.append("            break")
                 L.append("    if not found_any:")
-                L.append('        pytest.skip("UNPROVEN: 规则 ' + rule_ref + ' 在 Java 单测层（首选 JUnit + Mockito）和 Python fallback 层均无可执行锚点。\\n"')
+                L.append('        pytest.skip("UNPROVEN: 规则 ' + rule_ref + ' 在单测层（target emitter）和静态断言层均无可执行锚点。\\n"')
                 L.append('                 "  推荐：在 SoT 的 rules[' + rule_ref + '] 增加 target.class/method + test_cases 以生成 Java 单元测试；\\n"')
                 L.append('                 "  或在 checks 字段声明代码证据（注解/方法/异常）。")')
     body = "\n".join(L) + "\n"
@@ -1498,6 +1501,41 @@ def gen_pytest_unit_tests(rules: list, out_dir: Path, code_root: str = ".") -> t
                           f"请确认 target.class 包路径与 --code 根一致（改 SoT 或传对 --code）",
             })
 
+        # MOCK_NOT_STUBBED 对齐（v2.5.2，与 Java emitter 同语义，仅提示不阻断）：
+        # gen 时用 ast 读构造器 __init__ 的**签名形状**（必填参数 = 无默认值的参数），
+        # 不读方法体、不反推断言——与 Oracle Independence 红线一致。
+        # 协作者必填但 SoT 未给 given 桩 → 运行时测试会因 mock 默认值诚实失败，
+        # 这里补一个指向根因的信号。
+        ctor_required: list[str] = []
+        if mod_file.exists():
+            try:
+                import ast as _ast
+                _tree = _ast.parse(mod_file.read_text(encoding="utf-8"))
+                for _node in _ast.walk(_tree):
+                    if isinstance(_node, _ast.ClassDef) and _node.name == cls_name:
+                        for _item in _node.body:
+                            if isinstance(_item, _ast.FunctionDef) and _item.name == "__init__":
+                                _args = [a.arg for a in _item.args.args if a.arg != "self"]
+                                _ndef = len(_item.args.defaults)
+                                ctor_required = _args[:len(_args) - _ndef] if _ndef else _args
+                        break
+            except (OSError, SyntaxError, ValueError):
+                ctor_required = []  # 读不到签名就不判（宁缺毋滥，避免误报）
+        given_bases = {(g.get("call") or g.get("when") or "").split("(")[0].split(".")[0]
+                       for g in (r.get("given") or [])}
+        if ctor_required and not (set(ctor_required) & given_bases):
+            drifts.append({
+                "rule": rid, "class": cls_full, "method": method,
+                "kind": "MOCK_NOT_STUBBED",
+                "detail": f"构造器协作者 {', '.join(ctor_required)} 必填但 SoT test_case 未提供 "
+                          f"given 桩；测试可能因 mock 默认值失败。请补 given: "
+                          f"[{{ call: '<协作者>.<method>()', returns: <值> }}]。",
+            })
+            ctor_note = (f"    # ⚠️ MOCK_NOT_STUBBED：构造器协作者 {', '.join(ctor_required)} 未在 "
+                         f"SoT given 打桩——断言可能因 mock 默认值失败，请补 given。\n")
+        else:
+            ctor_note = ""
+
         body.append(f"def {sct_ids.rule_test_func(rid)}():")
         body.append(f'    """[意图] {rid}: {rtext}')
         body.append("")
@@ -1516,6 +1554,9 @@ def gen_pytest_unit_tests(rules: list, out_dir: Path, code_root: str = ".") -> t
         body.append('            f"SCT BINDING_DRIFT: SoT target {_mod_path}.{_cls_name} 无法导入（{e}）。"')
         body.append('            f" 请人工裁决：改 SoT 或修代码。",)')
         body.append("    _svc, _mocks = _sct_make(_cls)")
+        if ctor_note:
+            for _line in ctor_note.rstrip("\n").split("\n"):
+                body.append(_line)
         body.append("    _sig = inspect.signature(getattr(_cls, _method))")
         for g in (r.get("given") or []):
             gcall = g.get("call") or g.get("when") or ""
@@ -1584,6 +1625,12 @@ def gen_rule_tests(rules: list, out_dir: Path, code_root: str = "backend/src/mai
     """
     if lang == "auto":
         lang = detect_lang(code_root)
+    # fallback 头注释按实际承载层生成（v2.5.2：消除 Python 工程里的 Java 优先措辞）
+    unit_notes = {
+        "java": "单测层首选 JUnit + Mockito 的 Java 测试（gen_java_unit_tests）。",
+        "python": "本工程单测层由 pytest emitter 承载（test_unit_py.py，inspect + unittest.mock）。",
+        "none": "非标准工程：无 target 单测层，本文件是规则证据层的唯一载体（建议补 checks 锚点）。",
+    }
     java_files, java_drifts = ([], [])
     if lang == "java":
         java_files, java_drifts = gen_java_unit_tests(rules, java_test_root, junit_version, code_root)
@@ -1594,7 +1641,8 @@ def gen_rule_tests(rules: list, out_dir: Path, code_root: str = "backend/src/mai
                       if not ((r.get("target") or {}).get("class")
                               and (r.get("target") or {}).get("method")
                               and r.get("test_cases"))]
-    py_files = _gen_python_rule_fallbacks(fallback_rules, out_dir, code_root)
+    py_files = _gen_python_rule_fallbacks(fallback_rules, out_dir, code_root,
+                                          unit_layer_note=unit_notes.get(lang, ""))
     return java_files + py_files, java_drifts
 
 

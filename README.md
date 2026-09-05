@@ -155,7 +155,14 @@ prove tests *exist, run and cover*; they do not prove they were *really executed
 or that claimed work isn't phantom. Pass any of `--surefire` (real execution
 count) / `--tasks` (phantom tasks) / `--verify-compile` (compile gate) to `run`
 and the corresponding evidence items join the verdict — 0 actually-executed tests
-or a phantom task = **BLOCK**.
+or a phantom task = **BLOCK**. `--surefire` accepts any directory of `TEST-*.xml`:
+Java 用 `target/surefire-reports`；Python/pytest 把 `--junitxml` 报告复制/改名进去即可
+（如 `mkdir realtests && cp junit.xml realtests/TEST-pytest.xml`）。
+
+**PASS 的可信度分级（v2.5.2，呈现层）**：结论行不改变，但报告 §1、终端摘要和
+`--trace-json` 的 `declarations` 字段会列出本次的**范围声明**（如 `--skip-api-tests`、
+`impl_evidence=none`）——被声明跳过/降级的维度没有证据，"含声明的 PASS ≠ 全证据 PASS"，
+评审请先读范围声明。
 
 Exit codes: **PASS 0 · BLOCK 1 · UNPROVEN 2** — missing evidence never  
 masquerades as green (`UNPROVEN ≠ PASS`). Anything other than 0 blocks the merge.
@@ -244,7 +251,7 @@ for a human reviewer:
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.5.1.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.5.2.zip
 ```
 
 Or install from a local checkout during development:

@@ -153,6 +153,10 @@ def main() -> int:
             except Exception:
                 trace_ok = False
         check("trace.json 可解析且 verdict=PASS", trace_ok)
+        # v2.5.2 可信度分级：--skip-api-tests 是声明范围，必须可在 trace.json 中读到
+        decl_ok = trace_ok and isinstance(tj.get("declarations"), list) \
+            and any("skip-api-tests" in d for d in tj.get("declarations", []))
+        check("范围声明可读（declarations 含 skip-api-tests）", decl_ok)
 
         # ---- blocker：重复 ID 契约被拒 ----
         print("2) blocker（坏契约应被拒）")
@@ -247,8 +251,19 @@ rules:
         r = run([PY, str(SCRIPTS / "consistency-check.py"),
                  "--spec", str(tdir / "py" / "acceptance.yaml"), "--code", str(pycode),
                  "--tests", str(tdir / "py" / "out"), "--skip-api-tests",
-                 "--junit", str(tdir / "py" / "out" / "junit.xml")])
+                 "--junit", str(tdir / "py" / "out" / "junit.xml"),
+                 "--trace-json", str(tdir / "py" / "trace.json")])
         check("python 项目门禁 PASS(exit 0)", r.returncode == 0, r.stdout[-300:])
+        # v2.5.2：RULE 行证据标签指向实际文件（test_unit_py.py，不再是 test_rules.py 误标）
+        label_ok = False
+        try:
+            _tj = _json.loads((tdir / "py" / "trace.json").read_text(encoding="utf-8"))
+            _rule = next((it for it in _tj["items"] if it.get("kind") == "RULE"), {})
+            label_ok = _rule.get("test") == "test_unit_py.py::test_br_001" \
+                and _rule.get("evidence") == "PASS"
+        except Exception:
+            label_ok = False
+        check("RULE 行标签指向实际文件（test_unit_py.py）", label_ok)
 
         # ---- none：非标准工程（无 java/py 标记）降级为静态断言层 ----
         print("6) none（非标准工程：只留静态断言层，不崩溃）")

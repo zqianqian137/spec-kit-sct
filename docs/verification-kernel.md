@@ -7,9 +7,10 @@
 > 其余一切（JUnit / HTTP / E2E / Golden / BDD / 变异）都是 **Adapter** 或 **Community Extension**。
 >
 > ⚠️ **状态如实标注**：本文是架构规范。第 2 节的三个内核组件在 v2.1.0 已**落地并运行**；
-> v2.3.0 把「防空洞」收编进门禁（Gate 可选第五维「测试有效性」，见 §6 Step 0.5）。
-> 第 3 节的 `Evidence Record` 接口与第 6 节的 adapter 目录化已按用户拍板**触发式搁置**
-> （出现第二语言/社区 adapter 接入需求才启动，见 §6），当前状态 **UNPROVEN**——不假装完成。
+> v2.3.0 把「防空洞」收编进门禁（Gate 可选第五维「测试有效性」，见 §6 Step 0.5）；
+> v2.5.0 语言中立触发条件达成，最小落地 `--lang` 多 emitter + 非标准工程降级（见 §6 Step 2）。
+> 第 3 节的 `Evidence Record` 接口与第 6 节的 adapter 目录化结构仍按用户拍板**触发式搁置**
+> （社区 adapter 真实接入才启动，见 §6），当前状态 **UNPROVEN**——不假装完成。
 
 ---
 
@@ -149,7 +150,7 @@ Q3 它决定「证据怎么产生」吗？  → 是 = Adapter
 | **0** | **文档层收敛**：README / 方法论 / 本文统一 Kernel 叙事 | ✅ v2.2.0 |
 | **0.5** | **防空洞收编（v2.3.0 落地）**：verification-gate 三态（REAL_TESTS / PHANTOM_TASK / COMPILE）<br>以 `--surefire` / `--tasks` / `--verify-compile` 收编进 testing.run 门禁，成为可选「测试有效性」维度 | ✅ v2.3.0 |
 | **1** | `Evidence Record` schema 落地为 `templates/evidence-record-schema.json` + `scripts/evidence-collect.py` | ⏸ **触发式搁置** |
-| **2** | 现有能力 adapter 目录化：`scripts/adapters/{junit5,http,playwright}/`，每个 adapter 暴露 `emit` / `collect` | ⏸ **触发式搁置** |
+| **2** | 现有能力 adapter 目录化：`scripts/adapters/{junit5,http,playwright}/`，每个 adapter 暴露 `emit` / `collect` | 🟡 **最小语言中立已落地（v2.5.0）**：触发条件（第二语言需求）达成后，`--lang auto\|java\|python\|none` + pytest emitter + 非标准工程静态断言降级 + 门禁 cobertura 支持落地；**目录化结构仍触发式评估**（不为目录化而目录化） |
 | **3** | 首个社区 adapter 接入示例（验证接口够用） | ⏸ 待触发条件 |
 | **4** | 命令命名（保持 `speckit.testing.*` 还是改 `speckit.verify.*`） | ⏸ **待决策** |
 

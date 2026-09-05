@@ -3,6 +3,31 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.5.2] - 2026-09-05
+
+### Added — PASS 可信度分级（呈现层：方法论评估 §十 落地，零新增强制）
+
+按用户拍板"尽量不要代码强制"——本版**不新增任何 BLOCK 条件、不改判定逻辑与退出码**，
+只让"通过的证据成色"可读：
+
+- **范围声明**进报告 §1 / 终端摘要 / `--trace-json` 的 `declarations` 字段：
+  `--skip-api-tests`、`--skip-rule-tests`、`impl_evidence=none`（声明盲区）逐条列出；
+  PASS 含声明时明确标注 **"含声明的 PASS ≠ 全证据 PASS"**，评审先读范围声明；
+- **追溯矩阵证据标签精确化**：RULE / SCENARIO 行指向函数实际所在文件
+  （python 项目的可执行单测此前被误标为 `test_rules.py`，实为 `test_unit_py.py`）；
+  self-test python 档断言锁定；
+- **python emitter 补 `MOCK_NOT_STUBBED` 信号**（与 Java emitter 对齐）：
+  gen 时 ast 读构造器 `__init__` 签名形状（不读方法体），必填协作者缺 `given` 桩
+  → drift + 生成测试内提示注释。仅提示，不阻断；
+- **README**：`--surefire` 接受任意 `TEST-*.xml` 目录（Python/pytest 复制改名示例）
+  + PASS 可信度分级说明。
+
+### Changed — 文档对账（"文档=宣称、代码=强制"纪律）
+
+- `verification-kernel.md` §6 Step 2 对齐为 🟡 最小语言中立落地（目录化仍触发式评估）；
+- `test_rules.py` 头注释按 `--lang` 探测结果生成（消除 Python 工程里的 Java 优先措辞）；
+- 静态层无可执行锚点的 skip 提示措辞语言中性化。
+
 ## [2.5.1] - 2026-09-05
 
 ### Changed — 工程化收口（对照 v2.5 评估短板逐项落地）
