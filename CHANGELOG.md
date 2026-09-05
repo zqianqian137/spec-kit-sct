@@ -3,6 +3,50 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.5.0] - 2026-09-05
+
+### Added — L1 语言中立：Python emitter + 非标准工程降级（触发条件达成：用户明确第二语言需求）
+
+ROADMAP §7.3 Step 2 的触发条件（出现第二语言/生成器需求）已满足，落地**最小**语言中立：
+
+- `acceptance-codegen.py --lang auto|java|python|none`（默认 auto，按工程标记探测：
+  pom/gradle/*.java → java；*.py/pyproject/requirements → python；否则 none）；
+- **python emitter** `gen_pytest_unit_tests`：为带 `target+test_cases` 的规则生成
+  `test_unit_py.py`（函数名 `test_br_{suffix}`，与规则覆盖率/追溯矩阵既有约定兼容）；
+  输入值来自 SoT、形状经 `inspect.signature` 读公共签名、依赖用 stdlib
+  `unittest.mock.MagicMock` 注入（零外部依赖）；断言支持 `returns` / `throws`；
+  分歧如实报 drift（`MODULE_NOT_FOUND` / `MISSING_INPUT` / `SIGNATURE_MISMATCH`），不静默；
+- **非标准工程（none）**：不生成 target 单测、不崩溃，`test_rules.py` 静态断言层兜底；
+- self-test 增至**六档**：新增 python 档（派生 → pytest 真执行 → 门禁 PASS）与
+  none 档（非标准工程降级）。
+
+### Added — 门禁语言中立
+
+- `consistency-check.py` 覆盖率解析支持 **coverage.py 的 cobertura XML**
+  （`coverage xml`，类级行计数按 `<line hits>` 统计）——Python 项目与 Java
+  JaCoCo 走同一 `--jacoco` 参数、同一覆盖率门禁；增量匹配扩展到 `.py` 变更文件；
+- **Python 路由提取**（Flask / FastAPI / aiohttp 声明式路由）→ MISSING_IMPL 证据；
+  自造路由表的工程以契约 `_meta.impl_evidence: none` 显式声明后降级为人工核对项
+  （MEDIUM），接口层的真实执行证据仍然把关；
+- 接口测试预检提示语言无关的启动方式（uvicorn / manage.py / mvn spring-boot:run / java -jar）。
+
+### Added — L3 e2e 可选执行器（内网友好）
+
+- `scripts/e2e-runner.py`：环境齐备才执行 playwright specs（产出 junit 证据）；
+  缺 pytest-playwright / 浏览器时**一次说全缺失清单**（含内网离线安装提示），
+  退出码 2（UNPROVEN）——用户不装则 e2e 不参与门禁，UNPROVEN ≠ PASS；
+  浏览器二进制缺失（"Executable doesn't exist"）自动识别为 UNPROVEN 而非 BLOCK。
+
+### Fixed
+
+- `verification-gate.py` REAL_TESTS：兼容 pytest `--junitxml` 格式（根 `<testsuites>`，
+  计数在子节点）——此前读成 0 而误报 BLOCK；
+- `self-test.py` golden 补 `--code`（此前依赖不存在的默认 code root）。
+
+### Removed — 仓库卫生
+
+- `docs/methodology-assessment.md` 移出版本库（本地保留，`.gitignore` 忽略）。
+
 ## [2.4.0] - 2026-09-05
 
 ### Added — 内网工程级收口（全链路演练验证：门禁 PASS）

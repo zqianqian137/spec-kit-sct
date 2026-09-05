@@ -1383,12 +1383,214 @@ def _gen_python_rule_fallbacks(rules: list, out_dir: Path,
     return generated
 
 
-def gen_rule_tests(rules: list, out_dir: Path, code_root: str = "backend/src/main/java",
-                   java_test_root: str = "src/test/java", junit_version: str = "5") -> tuple:
-    """分发器：单测层首选 JUnit + Mockito Java 测试，无锚点规则保留 Python fallback。
+def detect_lang(code_root: str) -> str:
+    """探测工程语言，决定单测层 emitter（v2.5 语言中立第一步）：
+      java   — 向上找到 pom.xml / build.gradle(.kts)（与 verification-gate 编译门同思路）
+      python — code root 下存在 .py 源文件或 pyproject.toml / setup.py
+      none   — 非标准工程（无构建标记、无 .py）：只保留 test_rules.py 静态断言层
+    """
+    p = Path(code_root)
+    for cand in [p, *p.parents]:
+        if (cand / "pom.xml").exists() \
+                or (cand / "build.gradle").exists() \
+                or (cand / "build.gradle.kts").exists():
+            return "java"
+    if p.exists():
+        try:
+            if any(p.rglob("*.java")):
+                return "java"
+            if any(p.rglob("*.py")):
+                return "python"
+        except OSError:
+            pass
+        for marker in ("pyproject.toml", "setup.py", "requirements.txt"):
+            if (p / marker).exists():
+                return "python"
+    return "none"
+
+
+def gen_pytest_unit_tests(rules: list, out_dir: Path, code_root: str = ".") -> tuple:
+    """Python 单测 emitter（v2.5 语言中立）：为带 target+test_cases 的规则生成
+    pytest 原生单测（test_unit_py.py，函数名 test_br_{suffix}——与规则覆盖率
+    提取、追溯矩阵的既有约定兼容）。红线与 Java emitter 完全一致：
+      - 输入'值'来自 SoT test_cases；'形状'经 inspect.signature 读公共签名（不读方法体）；
+      - 断言期望只来自 SoT（returns / throws），绝不反推自代码；
+      - SoT 与代码分歧 → BINDING_DRIFT（模块缺失/签名不匹配/缺输入/未打桩），不静默；
+      - 构造器依赖用 stdlib unittest.mock.MagicMock 注入（零外部依赖）。
     返回 (生成文件列表, binding_drifts 列表)
     """
-    java_files, java_drifts = gen_java_unit_tests(rules, java_test_root, junit_version, code_root)
+    code_path = Path(code_root).resolve()
+    header = [
+        '"""',
+        "AUTO-GENERATED FROM acceptance.yaml - DO NOT EDIT",
+        "Emitter: python (pytest 原生单测；Java 项目请用默认 JUnit emitter)",
+        "",
+        "断言锚点: 本文件所有断言期望值来自 SoT (acceptance.yaml)，与实现无关。",
+        "输入'值'取自 SoT test_cases；'形状'(形参名/默认值)经 inspect 读公共签名，",
+        "不读方法体——不能也不会反推断言。构造器依赖由 unittest.mock 自动 mock。",
+        "测试失败 = 代码与 SoT 的分歧信号，绝不静默改测试变绿；交人工裁决：",
+        "  代码错 -> 改代码；SoT/测试错 -> 改 SoT 后重新生成。",
+        '"""',
+        "import importlib",
+        "import inspect",
+        "import sys",
+        "from pathlib import Path",
+        "from unittest.mock import MagicMock",
+        "",
+        "import pytest",
+        "",
+        f"_SCT_CODE_ROOT = Path({str(code_path)!r})",
+        "sys.path.insert(0, str(_SCT_CODE_ROOT))",
+        "",
+        "",
+        "def _sct_resolve_exc(name):",
+        '    """SoT throws 字段 → 异常类（builtins 短名或 module.Class 全名）。"""',
+        "    if isinstance(name, type):",
+        "        return name",
+        "    mod, _, cls = str(name).rpartition('.')",
+        "    if not mod:",
+        "        import builtins",
+        "        return getattr(builtins, cls)",
+        "    return getattr(importlib.import_module(mod), cls)",
+        "",
+        "",
+        "def _sct_make(cls):",
+        '    """实例化被测类：无参直接构造；构造器有必填参数时用 MagicMock 注入。"""',
+        "    try:",
+        "        return cls(), {}",
+        "    except TypeError:",
+        "        sig = inspect.signature(cls.__init__)",
+        "        kwargs, mocks = {}, {}",
+        "        for n, prm in sig.parameters.items():",
+        '            if n == "self" or prm.kind in (prm.VAR_POSITIONAL, prm.VAR_KEYWORD):',
+        "                continue",
+        "            if prm.default is inspect.Parameter.empty:",
+        f"                mocks[n] = MagicMock(name=n)",
+        "                kwargs[n] = mocks[n]",
+        "        return cls(**kwargs), mocks",
+        "",
+    ]
+    body: list[str] = []
+    drifts: list[dict] = []
+    generated: list[str] = []
+    anchored: set[str] = set()
+
+    for r in rules:
+        rid = r.get("id") or "?"
+        target = r.get("target") or {}
+        cls_full = target.get("class") or ""
+        method = target.get("method") or ""
+        cases = r.get("test_cases") or []
+        if not (cls_full and method and cases):
+            continue
+        anchored.add(rid)
+        suffix = sct_ids.id_suffix(rid)
+        rtext = (r.get("text", "") or "")[:50]
+
+        mod_name, _, cls_name = cls_full.rpartition(".")
+        mod_name = mod_name or cls_name
+        mod_path = code_path.joinpath(*mod_name.split("."))
+        mod_file = mod_path.with_suffix(".py")
+        if not (mod_file.exists() or (mod_path / "__init__.py").exists()):
+            drifts.append({
+                "rule": rid, "class": cls_full, "method": method,
+                "kind": "MODULE_NOT_FOUND",
+                "detail": f"模块 {mod_name} 在代码根 {code_path} 下未找到（{mod_file.name}）——"
+                          f"请确认 target.class 包路径与 --code 根一致（改 SoT 或传对 --code）",
+            })
+
+        body.append(f"def test_br_{suffix}():")
+        body.append(f'    """[意图] {rid}: {rtext}')
+        body.append("")
+        body.append("    真相来源: acceptance.yaml#rules[" + rid + "].test_cases")
+        body.append("    Given: 按公共签名构造被测实例（依赖自动 mock）")
+        body.append("    When:  以 SoT inputs 调用 target 方法")
+        body.append("    Then:  断言 returns / throws（只来自 SoT）")
+        body.append('    """')
+        body.append(f'    _mod_path = {mod_name!r}')
+        body.append(f'    _cls_name = {cls_name!r}')
+        body.append(f'    _method = {method!r}')
+        body.append("    try:")
+        body.append("        _cls = getattr(importlib.import_module(_mod_path), _cls_name)")
+        body.append("    except (ImportError, AttributeError) as e:")
+        body.append("        pytest.fail(")
+        body.append('            f"SCT BINDING_DRIFT: SoT target {_mod_path}.{_cls_name} 无法导入（{e}）。"')
+        body.append('            f" 请人工裁决：改 SoT 或修代码。",)')
+        body.append("    _svc, _mocks = _sct_make(_cls)")
+        body.append("    _sig = inspect.signature(getattr(_cls, _method))")
+        for g in (r.get("given") or []):
+            gcall = g.get("call") or g.get("when") or ""
+            gret = g.get("returns")
+            base = gcall.split("(")[0].split(".")[0] if gcall else ""
+            chain = gcall.split("(")[0].split(".")[1:] if gcall else []
+            if base and gret is not None:
+                if chain:
+                    body.append(f"    _mocks[{base!r}]." + ".".join(chain) + f".return_value = {gret!r}")
+                else:
+                    body.append(f"    # SoT given: {gcall} 返回 {gret!r}（call 未给方法链，跳过打桩）")
+            else:
+                body.append(f"    # SoT given 未提供 call/returns，跳过打桩")
+        cases_lit = repr(cases)
+        body.append(f"    _cases = {cases_lit}")
+        body.append("    for _tc in _cases:")
+        body.append("        _inputs = _tc.get('inputs') or {}")
+        body.append("        _exp = _tc.get('expect') or {}")
+        body.append("        _kwargs = {}")
+        body.append("        for _n, _p in _sig.parameters.items():")
+        body.append('            if _n == "self" or _p.kind in (_p.VAR_POSITIONAL, _p.VAR_KEYWORD):')
+        body.append("                continue")
+        body.append("            if _n in _inputs:")
+        body.append("                _kwargs[_n] = _inputs[_n]")
+        body.append("            else:")
+        body.append("                pytest.fail(")
+        body.append('                    f"SCT BINDING_DRIFT MISSING_INPUT: 参数 {_n} 在 SoT inputs 中无对应值"')
+        body.append('                    f"（请补 inputs 或确认参数已移除）。",)')
+        body.append("        for _k in _inputs:")
+        body.append("            if _k not in _sig.parameters:")
+        body.append("                pytest.fail(")
+        body.append('                    f"SCT BINDING_DRIFT SIGNATURE_MISMATCH: 方法 {_method} 公共签名无参数 {_k}，"')
+        body.append('                    f" SoT inputs 却提供了——请确认参数是否已移除（改 SoT）或实现缺失（改代码）。",)')
+        body.append("        _fn = getattr(_svc, _method)")
+        body.append("        if 'throws' in _exp:")
+        body.append("            with pytest.raises(_sct_resolve_exc(_exp['throws'])):")
+        body.append("                _fn(**_kwargs)")
+        body.append("        elif 'returns' in _exp:")
+        body.append("            _actual = _fn(**_kwargs)")
+        body.append(f"            assert _actual == _exp['returns'], \\")
+        body.append(f"                f\"{rid} 返回值与预期不符: 期望 {{_exp['returns']!r}} 实际 {{_actual!r}}\"")
+        body.append("        else:")
+        body.append("            _fn(**_kwargs)  # SoT 未声明 returns/throws：只执行（冒烟），断言留待 SoT 补充")
+        body.append("")
+
+    if not body:
+        return [], []
+
+    out = "\n".join(header) + "\n\n" + "\n".join(body)
+    fp = out_dir / "test_unit_py.py"
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(out, encoding="utf-8")
+    generated.append(str(fp))
+    return generated, drifts
+
+
+def gen_rule_tests(rules: list, out_dir: Path, code_root: str = "backend/src/main/java",
+                   java_test_root: str = "src/test/java", junit_version: str = "5",
+                   lang: str = "auto") -> tuple:
+    """分发器（v2.5 语言中立）：按 lang 选择单测层 emitter。
+      java   — JUnit + Mockito（默认，向后兼容）
+      python — pytest 原生单测（test_unit_py.py，inspect + MagicMock，零外部依赖）
+      none   — 非标准工程：不生成 target 单测，只保留 test_rules.py 静态断言层
+      auto   — 按工程标记探测（pom/gradle → java；.py/pyproject → python；否则 none）
+    无锚点规则一律保留 Python fallback（静态断言）。返回 (生成文件列表, binding_drifts)
+    """
+    if lang == "auto":
+        lang = detect_lang(code_root)
+    java_files, java_drifts = ([], [])
+    if lang == "java":
+        java_files, java_drifts = gen_java_unit_tests(rules, java_test_root, junit_version, code_root)
+    elif lang == "python":
+        java_files, java_drifts = gen_pytest_unit_tests(rules, out_dir, code_root)
+    # lang == none：不生成 target 单测（静态断言层兜底，门禁按无锚点规则处理）
     fallback_rules = [r for r in rules
                       if not ((r.get("target") or {}).get("class")
                               and (r.get("target") or {}).get("method")
@@ -1648,6 +1850,10 @@ def main():
     parser.add_argument("--junit", default="auto", choices=["auto", "4", "5"],
                         help="JUnit 版本：auto(默认，按 detect_junit_version 自动识别；"
                              "优先 5；项目存量为 4 则跟 4；不可混用)、4、5")
+    parser.add_argument("--lang", default="auto", choices=["auto", "java", "python", "none"],
+                        help="单测层 emitter 语言（v2.5 语言中立）：auto(默认，按工程标记探测："
+                             "pom/gradle→java，*.py/pyproject→python，否则 none=非标准工程只留静态断言层)、"
+                             "java、python、none")
     parser.add_argument("--base-url",
                         help="接口测试 base_url（优先级：CLI --base-url > 环境变量 BASE_URL > "
                              "codegraph.project.base_url > 默认 http://localhost:8080）。"
@@ -1747,7 +1953,14 @@ def main():
         print(f"JUnit version (explicit): {junit_version}")
     rule_files, binding_drifts = ([], [])
     if not args.skip_unit_tests:
-        rule_files, binding_drifts = gen_rule_tests(rules, out_dir, args.code, args.java_test_root, junit_version)
+        emitter = args.lang
+        if emitter == "auto":
+            emitter = detect_lang(args.code)
+        print(f"Unit-test emitter language: {emitter}"
+              + ("（auto 探测）" if args.lang == "auto" else ""))
+        rule_files, binding_drifts = gen_rule_tests(rules, out_dir, args.code,
+                                                    args.java_test_root, junit_version,
+                                                    lang=emitter)
         for f in rule_files:
             print(f"  + {f}")
         if binding_drifts:

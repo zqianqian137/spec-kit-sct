@@ -157,6 +157,39 @@ def extract_code_apis(code_root: Path, scope_filter: str = "all") -> Set[str]:
             full_path = build_full(class_prefix, path)
             norm = re.sub(r'\{(\w+)\}', r':\1', full_path)
             apis.add(f"{method} {norm}")
+
+    # v2.5 语言中立：Python 路由提取（Flask / FastAPI / aiohttp 约定）。
+    # 覆盖常见声明式路由；自造路由表的项目用契约 _meta.impl_evidence: none
+    # 显式声明"不做路由级实现核对"，MISSING_IMPL 降级为人工核对项而非 HIGH。
+    for py_file in list(code_root.rglob("*.py")):
+        if scope_l and scope_l not in py_file.name.lower():
+            continue
+        try:
+            content = py_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if "route" not in content and "post(" not in content.lower() \
+                and "get(" not in content.lower() and "put(" not in content.lower() \
+                and "delete(" not in content.lower() and "patch(" not in content.lower():
+            continue
+        # FastAPI：@app.post("/path") / @router.delete("/path") ...
+        for verb, path in re.findall(
+                r'@\w+\.(post|get|put|delete|patch)\(\s*["\']([^"\']+)["\']', content, re.I):
+            norm = re.sub(r'\{(\w+)\}', r':\1', path if path.startswith("/") else "/" + path)
+            apis.add(f"{verb.upper()} {norm}")
+        # Flask：@app.route("/path", methods=["POST", ...])（缺 methods 默认 GET）
+        for m in re.finditer(
+                r'@[\w.]+\.route\(\s*["\']([^"\']+)["\']([^)]*)\)', content):
+            path, extra = m.group(1), m.group(2)
+            methods = re.findall(r'["\'](GET|POST|PUT|DELETE|PATCH)["\']', extra, re.I) or ["GET"]
+            norm = re.sub(r'<(\w+:)?(\w+)>', r':\2', path if path.startswith("/") else "/" + path)
+            for mm in methods:
+                apis.add(f"{mm.upper()} {norm}")
+        # aiohttp：routes.append(("POST", "/path", handler)) 或 web.post("/path", h)
+        for verb, path in re.findall(
+                r'web\.(post|get|put|delete|patch)\(\s*["\']([^"\']+)["\']', content, re.I):
+            norm = re.sub(r'\{(\w+)\}', r':\1', path if path.startswith("/") else "/" + path)
+            apis.add(f"{verb.upper()} {norm}")
     return apis
 
 
@@ -225,6 +258,28 @@ def parse_jacoco(xml_path: Path) -> dict:
             d[c.get('type')] = (int(c.get('missed')), int(c.get('covered')))
         return d
 
+    # v2.5 语言中立：coverage.py 的 XML（cobertura 格式）与 JaCoCo 同门禁——
+    # Python 项目用 `coverage xml` 产出，行计数由 <line hits> 逐行统计
+    # （cobertura 类级只有 line-rate，无 missed/covered 总量属性）。
+    if root.tag == "coverage":
+        def _int(el, k):
+            try:
+                return int(float(el.get(k) or 0))
+            except (TypeError, ValueError):
+                return 0
+        covered = _int(root, "lines-covered")
+        valid = _int(root, "lines-valid")
+        overall = {"LINE": (valid - covered, covered)}
+        classes = []
+        for cls in root.iter("class"):
+            hit_lines = [int(ln.get("hits") or 0) for ln in cls.findall("lines/line")]
+            cov = sum(1 for h in hit_lines if h > 0)
+            val = len(hit_lines)
+            fname = (cls.get("filename") or "").replace("\\", "/").split("/")[-1]
+            if val:
+                classes.append((cls.get("name") or fname, fname, {"LINE": (val - cov, cov)}))
+        return {'overall': overall, 'classes': classes}
+
     classes = []
     for pkg in root.findall('package'):
         for cls in pkg.findall('class'):
@@ -233,13 +288,14 @@ def parse_jacoco(xml_path: Path) -> dict:
 
 
 def git_changed_java_files(base: str) -> Set[str]:
-    """git diff → 变更的 .java 文件名集合（用于增量覆盖率匹配）"""
+    """git diff → 变更的源码文件名集合（v2.5 语言中立：.java + .py，用于增量覆盖率匹配）"""
     try:
         out = subprocess.check_output(
             ["git", "diff", "--name-only", base, "HEAD"],
             text=True, encoding="utf-8", stderr=subprocess.DEVNULL,
         )
-        return {Path(f.strip()).name for f in out.splitlines() if f.strip().endswith(".java")}
+        return {Path(f.strip()).name for f in out.splitlines()
+                if f.strip().endswith((".java", ".py"))}
     except Exception:
         return set()
 
@@ -596,12 +652,23 @@ def check_consistency(spec: dict, code_apis: Set[str], test_cov: Dict[str, Set[s
         code_apis_normalized.add(f"{method} {normalize_for_compare(path)}")
     missing_in_code = spec_apis_normalized - code_apis_normalized
     extra_in_code = code_apis_normalized - spec_apis_normalized
+    # v2.5：非标准工程逃生门——契约 _meta.impl_evidence: none 显式声明
+    # "路由由自造机制承载，静态提取不可见"，MISSING_IMPL 降级为人工核对项（MEDIUM），
+    # 不产生 HIGH 假阻断；接口层的执行证据（L2 真调用）仍然照常把关。
+    impl_evidence = ((spec.get("_meta") or {}).get("impl_evidence") or "routes").lower()
     for m in missing_in_code:
-        issues.append({
-            "type": "MISSING_IMPL",
-            "severity": "HIGH",
-            "message": f"spec 定义了接口但 code 未实现: {m}",
-        })
+        if impl_evidence == "none":
+            issues.append({
+                "type": "MISSING_IMPL",
+                "severity": "MEDIUM",
+                "message": f"spec 定义了接口但 code 未实现（impl_evidence=none，需人工核对路由）: {m}",
+            })
+        else:
+            issues.append({
+                "type": "MISSING_IMPL",
+                "severity": "HIGH",
+                "message": f"spec 定义了接口但 code 未实现: {m}",
+            })
     if mode != "incremental":
         # 全量模式：code 有而 SoT 无 → 漂移
         # 增量模式：存量未登记代码不算漂移，跳过
@@ -1210,6 +1277,9 @@ def preflight_api_tests(tests_root: Path, timeout: float) -> int:
     print("⚠️  [prereq] 接口测试缺前：")
     print(f"    - BASE_URL 不可达：{detail or '服务未监听'}")
     print("    - API_AUTH_TOKEN 未设")
+    print("    接口层（L2）与实现语言无关（v2.5）：任何能本地起服务的项目都可测——")
+    print("    Python `uvicorn app:app` / `python manage.py runserver`，Java `mvn spring-boot:run`")
+    print("    或 `gradle bootRun`/`java -jar`，非标准工程起你的启动脚本即可；服务起来后重跑。")
     print("    在对话框确认输入：")
     print("      1) 提供 token / 修环境后再跑：`export API_AUTH_TOKEN=...` 后重跑 testing.run")
     print("      2) 跳过接口层：`testing.run --skip-api-tests ...`")
@@ -1223,7 +1293,8 @@ def main():
     parser.add_argument("--tests", required=True)
     parser.add_argument("--scope", default="all",
                         help="Controller 名字关键字过滤；'all'（默认）= 扫描全部 controller")
-    parser.add_argument("--jacoco", help="jacoco.xml 路径（总体+增量覆盖率）")
+    parser.add_argument("--jacoco", help="覆盖率 XML 路径（总体+增量覆盖率）。语言中立（v2.5）："
+                                         "Java 用 JaCoCo jacoco.xml；Python 用 coverage.py 的 `coverage xml`（cobertura 格式），自动识别")
     parser.add_argument("--base", default="main", help="增量覆盖率基线 git ref")
     parser.add_argument("--junit", help="pytest --junitxml 报告路径（执行情况）")
     parser.add_argument("--impact", help="change-impact.md 路径（改动点审查表）")

@@ -65,10 +65,10 @@ PASS / BLOCK / UNPROVEN (Quality Gate)
   anti-hollow 0 真实执行），零外部依赖。已捕获并修复 2 个真实缺陷（manifest 相对路径、Java 单测追溯误判）
 - **SoT 三层拆分**（generated / overrides / lock）：⏸ 设计预留——当前以「派生字段 vs 人工字段」分区 +
   write-once manifest 守卫；完整拆分为独立文件需配套迁移工具，标记为下个里程碑
-- **codegen adapter 化**（语言中立）：⏸ **触发式搁置（v2.3 起）**——见[第七节 7.3](#七v30从-test-extension-收敛为-verification-kernel)。
-  当前 Java/JUnit 为默认 emitter、无第二个接入方，目录化重构不服务"不遗漏/到位"目标，不做；
-  触发条件（第二语言/社区 adapter 真实接入）满足才启动。架构接口（`Evidence Record` +
-  `scripts/adapters/...`）设计见 `docs/verification-kernel.md`
+- **codegen adapter 化**（语言中立）：🟢 **v2.5 最小落地**——触发条件（第二语言需求）已达成：
+  `--lang auto|java|python|none` + pytest 原生 emitter + 非标准工程静态断言降级 +
+  门禁 cobertura 支持；adapter 目录化（`scripts/adapters/`）仍按触发条件另行评估，
+  不为目录化而目录化。架构接口（`Evidence Record`）设计见 `docs/verification-kernel.md`
 - **防空洞收编** ✅ v2.3.0：verification-gate 的 REAL_TESTS / PHANTOM_TASK / COMPILE
   以 `--surefire` / `--tasks` / `--verify-compile` 收编进 testing.run 门禁（可选「测试有效性」维度），
   堵"声称有测试实际 0 执行"的假绿；self-test 增第 4 档 anti-hollow 反例
@@ -123,7 +123,7 @@ SCT 真正难以替代的是**验证**：证明 Spec 被正确实现，而不是
 | 0 | **文档层收敛**：README / 方法论 / 架构文档统一 Kernel 叙事 | ✅ 完成 |
 | 0.5 | **防空洞收编（v2.3 落地）**：verification-gate 三态（REAL_TESTS / PHANTOM_TASK / COMPILE）<br>以 `--surefire` / `--tasks` / `--verify-compile` 收编进 testing.run 门禁，成为可选第五维「测试有效性」 | ✅ v2.3.0 |
 | 1 | `Evidence Record` schema（`templates/evidence-record-schema.json`）+ `scripts/evidence-collect.py` | ⏸ **触发式搁置** |
-| 2 | 现有能力 adapter 目录化：`scripts/adapters/{junit5,http,playwright}/` | ⏸ **触发式搁置** |
+| 2 | 现有能力 adapter 目录化：`scripts/adapters/{junit5,http,playwright}/` | 🟡 最小语言中立已落地（v2.5：pytest emitter + 非标准工程降级）；目录化仍触发式评估 |
 | 3 | 首个社区 adapter 接入示例（验证接口够用） | ⏸ 待触发条件 |
 | 4 | 命令命名（保持 `speckit.testing.*` vs 改 `speckit.verify.*`） | ⏸ **待决策** |
 

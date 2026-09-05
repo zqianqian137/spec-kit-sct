@@ -124,7 +124,8 @@ def main() -> int:
         check("contract-validate PASS", r.returncode == 0, r.stdout[-300:])
         r = run([PY, str(SCRIPTS / "acceptance-codegen.py"),
                  "--spec", str(tdir / "acceptance.yaml"), "--out", str(tdir / "out"),
-                 "--java-test-root", str(tdir / "out"), "--force"])
+                 "--java-test-root", str(tdir / "out"), "--code", str(tdir / "code"),
+                 "--force"])
         check("codegen 派生成功", r.returncode == 0 and (tdir / "out" / "test_api_001.py").exists(),
               r.stdout[-300:])
         # 校验 write-once manifest 落盘
@@ -169,7 +170,8 @@ def main() -> int:
         leak = leak.replace("      - id: BR-F003-001", "      - id: BR-F003-002")
         make_workspace(tdir / "leak", leak.replace("rules:", "rules:", 1) and leak)
         r = run([PY, str(SCRIPTS / "acceptance-codegen.py"),
-                 "--spec", str(tdir / "leak" / "acceptance.yaml"), "--out", str(tdir / "leak" / "out"), "--force"])
+                 "--spec", str(tdir / "leak" / "acceptance.yaml"), "--out", str(tdir / "leak" / "out"),
+                 "--code", str(tdir / "leak" / "code"), "--force"])
         r = run([PY, str(SCRIPTS / "consistency-check.py"),
                  "--spec", str(tdir / "leak" / "acceptance.yaml"), "--code", str(tdir / "leak" / "code"),
                  "--tests", str(tdir / "leak" / "out"), "--skip-api-tests"])
@@ -201,11 +203,60 @@ def main() -> int:
         check("REAL_TESTS>0 → PASS(exit 0)", r.returncode == 0 and "REAL_TESTS" in r.stdout,
               r.stdout[-300:])
 
+        # ---- python：Python emitter 端到端（语言中立，v2.5）----
+        print("5) python（pytest emitter：派生 → 执行 → 门禁）")
+        pycode = tdir / "py" / "code"
+        pycode.mkdir(parents=True)
+        (pycode / "calc_service.py").write_text(
+            "class CalcService:\n    def add(self, a, b):\n        return a + b\n",
+            encoding="utf-8")
+        py_contract = """\
+version: 1
+feature: f003
+rules:
+  - id: BR-F003-001
+    text: 求和正确
+    priority: P0
+    target: {class: calc_service.CalcService, method: add}
+    test_cases:
+      - inputs: {a: 1, b: 2}
+        expect: {returns: 3}
+"""
+        (tdir / "py" / "acceptance.yaml").write_text(py_contract, encoding="utf-8")
+        r = run([PY, str(SCRIPTS / "acceptance-codegen.py"),
+                 "--spec", str(tdir / "py" / "acceptance.yaml"), "--out", str(tdir / "py" / "out"),
+                 "--code", str(pycode), "--skip-api-tests", "--force"])
+        unit_py = tdir / "py" / "out" / "test_unit_py.py"
+        check("python emitter 派生 test_unit_py.py", unit_py.exists(), r.stdout[-300:])
+        check("函数名遵循 test_br_ 约定", unit_py.exists() and "def test_br_001" in unit_py.read_text(encoding="utf-8"))
+        r = run([PY, "-m", "pytest", str(unit_py), "-q", "--junitxml",
+                 str(tdir / "py" / "out" / "junit.xml")], cwd=str(tdir / "py"))
+        check("python 单测真实执行 PASS", r.returncode == 0, r.stdout[-300:])
+        r = run([PY, str(SCRIPTS / "consistency-check.py"),
+                 "--spec", str(tdir / "py" / "acceptance.yaml"), "--code", str(pycode),
+                 "--tests", str(tdir / "py" / "out"), "--skip-api-tests",
+                 "--junit", str(tdir / "py" / "out" / "junit.xml")])
+        check("python 项目门禁 PASS(exit 0)", r.returncode == 0, r.stdout[-300:])
+
+        # ---- none：非标准工程（无 java/py 标记）降级为静态断言层 ----
+        print("6) none（非标准工程：只留静态断言层，不崩溃）")
+        (tdir / "plain").mkdir()
+        (tdir / "plain" / "acceptance.yaml").write_text(
+            'version: 1\nfeature: f003\nrules:\n  - id: BR-F003-001\n    text: 审计日志存在\n'
+            '    priority: P0\n    checks:\n      - kind: text\n        expect: "audit"\n',
+            encoding="utf-8")
+        r = run([PY, str(SCRIPTS / "acceptance-codegen.py"),
+                 "--spec", str(tdir / "plain" / "acceptance.yaml"), "--out", str(tdir / "plain" / "out"),
+                 "--code", str(tdir / "plain"), "--skip-api-tests", "--force"])
+        check("非标准工程不生成 target 单测、不崩溃",
+              r.returncode == 0 and not (tdir / "plain" / "out" / "test_unit_py.py").exists()
+              and (tdir / "plain" / "out" / "test_rules.py").exists(), r.stdout[-300:])
+
     print("-" * 60)
     if failures:
         print(f"❌ {len(failures)} 项自测失败: {', '.join(failures)}")
         return 1
-    print("✅ 全部自测通过（golden / blocker / gate / anti-hollow 四档）")
+    print("✅ 全部自测通过（golden / blocker / gate / anti-hollow / python / none 六档）")
     return 0
 
 

@@ -175,11 +175,29 @@ saw the generation step.
 
 ### Language neutrality
 
-SCT is not a Java tool. Java/JUnit is the **default adapter** because that is  
-the stack it was built against first — but the test-plan format, the coverage  
-gate, and the report are language-independent, and the emitter is pluggable.  
-The test plan describes *what* must be true; the adapter decides *how* to say it  
-in a given language.
+SCT is not a Java tool. **L1 的单测 emitter 自 v2.5 起按工程自动适配**（`testing.design
+--lang auto`，默认）：pom/gradle 或存在 `*.java` → JUnit emitter；存在 `*.py` →
+**pytest 原生单测 emitter**（`test_unit_py.py`，`inspect` 读公共签名取形状、
+`unittest.mock` 注入依赖，零外部依赖，断言期望同样只来自契约）；两者都无 →
+**非标准工程**：不生成 target 单测，只保留 `test_rules.py` 静态断言层（`checks`
+锚点声明代码证据），门禁不崩溃。
+
+| Layer | Java 项目 | Python 项目 | 非标准工程 |
+| --- | --- | --- | --- |
+| **L1 unit** | JUnit+Mockito（mvn/gradle 执行） | pytest 原生（`pytest` 执行） | `test_rules.py` 静态断言 |
+| **L2 API** | ✅ 语言无关——`BASE_URL` 可达即可 | ✅ 同左 | ✅ 同左 |
+| **L3 e2e** | 有环境就跑，缺环境 UNPROVEN + 安装提示 | 同左 | 同左 |
+
+- **L2 与实现语言无关**：Python `uvicorn`/`manage.py runserver`、Java
+  `mvn spring-boot:run`/`java -jar`、非标准工程的启动脚本——服务起来，`BASE_URL`
+  指过去，接口层即可真执行。路由级实现核对（MISSING_IMPL）自动识别 Flask /
+  FastAPI / aiohttp 声明式路由；自造路由表的工程在契约 `_meta.impl_evidence: none`
+  显式声明后降级为人工核对项（接口层的真实执行证据仍然把关）。
+- **覆盖率同门禁**：Java 用 JaCoCo `jacoco.xml`，Python 用 `coverage xml`
+  （cobertura 格式，自动识别）；增量匹配同时覆盖 `.java` 与 `.py` 变更文件。
+- **L3 e2e 永不绑架门禁**：`scripts/e2e-runner.py` 环境齐备才执行；缺
+  pytest-playwright 或浏览器时给出精确缺失清单与内网离线安装提示；用户不装则
+  e2e 以 UNPROVEN 退出、不参与判定（UNPROVEN ≠ PASS，人工知情即可）。
 
 > 这其实是 Kernel / Adapter 切分的一个直接推论：**语言属于 adapter，裁决属于 kernel**。
 > 所以新增一门语言的支持，不需要动门禁、追溯矩阵和报告——只需要加一个 emitter。
@@ -226,7 +244,7 @@ for a human reviewer:
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.4.0.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.5.0.zip
 ```
 
 Or install from a local checkout during development:
@@ -372,8 +390,13 @@ fixes must trace back to the requirement — the test is the alarm, not the verd
 ## Notes
 
 - **运行前置**：Python ≥ 3.10 + PyYAML（`pip install pyyaml`）。`self-test.py` 启动时做环境探针，
-  缺依赖会给明确报错而不是半路失败。L1 层需 Maven/Gradle（`mvn test` + JaCoCo）；
-  L2/L3 为 pytest 执行（`pip install pytest requests`）。
+  缺依赖会给明确报错而不是半路失败。L1 层按语言执行：Java 需 Maven/Gradle（`mvn test` + JaCoCo），
+  Python 需 pytest + coverage（`pip install pytest requests coverage`）；L2/L3 为 pytest 执行。
+- **语言自动适配（v2.5）**：`testing.design --lang auto|java|python|none`——auto 按工程标记探测
+  （pom/gradle/*.java → JUnit emitter；*.py/pyproject → pytest emitter；否则非标准工程只留静态断言层）。
+- **e2e 可选执行（v2.5）**：`python scripts/e2e-runner.py --specs e2e/auto_generated
+  --out e2e/e2e-junit.xml`——环境齐备才跑，缺什么明确提示；用户不装则 e2e UNPROVEN 退出，
+  不参与门禁。
 - **契约校验已命令级强制（v2.4）**：`testing.run`（consistency-check.py）入口内置
   `contract-validate`——坏契约直接 BLOCK(exit 1)，绕过命令直调脚本也拦得住；
   不再依赖"先跑 contract-validate"的约定。

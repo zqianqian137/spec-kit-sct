@@ -197,11 +197,15 @@ def check_real_tests(surefire_dir: str | None) -> tuple:
             r = ET.parse(x).getroot()
         except Exception:
             continue
-        for k in totals:
-            try:
-                totals[k] += int(r.get(k) or 0)
-            except ValueError:
-                pass
+        # v2.5：兼容两种 junit XML——surefire 根节点即 <testsuite>（计数在根属性）；
+        # pytest --junitxml 根为 <testsuites>（计数在各 <testsuite> 子节点）
+        suites = [r] if r.tag == "testsuite" else (r.findall("testsuite") or [])
+        for s in suites:
+            for k in totals:
+                try:
+                    totals[k] += int(s.get(k) or 0)
+                except ValueError:
+                    pass
 
     if totals["tests"] == 0:
         return BLOCK, 0, "surefire 报告中实际执行测试数为 0（声称有测试但未真正执行）"
