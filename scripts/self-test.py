@@ -5,11 +5,14 @@ self-test.py — SCT 自测（SCT 2.0 P1-3：自测 + golden fixtures + 回归�
 不依赖 pytest/外部工具，纯 stdlib + 本地脚本，跑完整链路并断言：
   契约校验(contract-validate) → 测试派生(codegen) → 门禁(check) → 追溯矩阵
 
-断言四档：
+断言七档：
   golden    合法契约全链路应 PASS
   blocker   坏契约（重复 ID）应被 contract-validate BLOCK
   gate      漏测场景应被 check BLOCK
   anti-hollow  surefire 真实执行数为 0 → check 的 REAL_TESTS 应 BLOCK（防空洞，v2.3）
+  python       pytest emitter 端到端：派生 → 真执行 → 门禁 PASS（v2.5）
+  none         非标准工程降级为静态断言层，不崩溃（v2.5）
+  units        解析器/路由提取/语言探测/命名约定 纯函数单测（v2.5.1）
 
 用法：python scripts/self-test.py   （退出码 0=全过 1=有失败）
 """
@@ -229,6 +232,15 @@ rules:
         unit_py = tdir / "py" / "out" / "test_unit_py.py"
         check("python emitter 派生 test_unit_py.py", unit_py.exists(), r.stdout[-300:])
         check("函数名遵循 test_br_ 约定", unit_py.exists() and "def test_br_001" in unit_py.read_text(encoding="utf-8"))
+        # emitter 语法守卫：字符串拼接生成的测试必须可解析（v2.5 曾在此类拼接上踩坑）
+        if unit_py.exists():
+            import ast as _ast
+            try:
+                _ast.parse(unit_py.read_text(encoding="utf-8"))
+                _syntax_ok = True
+            except SyntaxError:
+                _syntax_ok = False
+            check("python emitter 产物可被 ast.parse（语法守卫）", _syntax_ok)
         r = run([PY, "-m", "pytest", str(unit_py), "-q", "--junitxml",
                  str(tdir / "py" / "out" / "junit.xml")], cwd=str(tdir / "py"))
         check("python 单测真实执行 PASS", r.returncode == 0, r.stdout[-300:])
@@ -252,11 +264,97 @@ rules:
               r.returncode == 0 and not (tdir / "plain" / "out" / "test_unit_py.py").exists()
               and (tdir / "plain" / "out" / "test_rules.py").exists(), r.stdout[-300:])
 
+        # ---- units：解析器/路由提取/语言探测/命名约定 纯函数单测（v2.5.1，补函数级回归）----
+        print("7) units（解析器与命名约定纯函数）")
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib.util as _ilu
+
+        def _load_mod(mod_name: str, filename: str):
+            s = _ilu.spec_from_file_location(mod_name, SCRIPTS / filename)
+            m = _ilu.module_from_spec(s)
+            s.loader.exec_module(m)
+            return m
+
+        cc = _load_mod("sct_cc_units", "consistency-check.py")
+        cg_mod = _load_mod("sct_cg_units", "acceptance-codegen.py")
+        sct = _load_mod("sct_ids_units", "sct_ids.py")
+
+        def _w(tmp: Path, name: str, text: str) -> Path:
+            p = tmp / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8")
+            return p
+
+        with tempfile.TemporaryDirectory() as td2:
+            u = Path(td2)
+            # 7.1 cobertura（coverage.py XML）：类级行计数按 <line hits> 统计
+            cob = _w(u, "cov.xml", """<?xml version="1.0"?>
+<coverage lines-valid="4" lines-covered="3" line-rate="0.75">
+  <packages><package name="app"><classes>
+    <class name="svc.py" filename="app/svc.py" line-rate="0.75"><lines>
+      <line number="1" hits="1"/><line number="2" hits="0"/>
+      <line number="3" hits="1"/><line number="4" hits="1"/>
+    </lines></class>
+  </classes></package></packages>
+</coverage>""")
+            j = cc.parse_jacoco(cob)
+            check("cobertura: 总体 LINE=(1,3)", j["overall"].get("LINE") == (1, 3))
+            check("cobertura: 类级 basename 匹配增量",
+                  cc.incremental_coverage(j, {"svc.py"})["counters"].get("LINE") == (1, 3))
+            # 7.2 jacoco XML：counter 属性直接读取
+            jac = _w(u, "jac.xml", """<report>
+  <package name="p"><class name="C" sourcefilename="C.java">
+    <counter type="LINE" missed="2" covered="8"/></class></package>
+  <counter type="LINE" missed="2" covered="8"/>
+</report>""")
+            j2 = cc.parse_jacoco(jac)
+            check("jacoco: LINE=(2,8)", j2["overall"].get("LINE") == (2, 8))
+            # 7.3 Python 路由提取：FastAPI / Flask / aiohttp 三种约定
+            _w(u, "r/app.py", """from fastapi import FastAPI
+app = FastAPI()
+@app.post("/api/upload")
+def upload(): ...
+""")
+            _w(u, "r/flask_app.py", """from flask import Flask
+app = Flask(__name__)
+@app.route("/api/users", methods=["POST"])
+def users(): ...
+""")
+            _w(u, "r/aio_app.py", """from aiohttp import web
+def h(request): ...
+routes = [web.get("/health", h)]
+""")
+            apis = cc.extract_code_apis(u / "r")
+            check("FastAPI POST /api/upload 提取", "POST /api/upload" in apis)
+            check("Flask POST /api/users 提取", "POST /api/users" in apis)
+            check("aiohttp GET /health 提取", "GET /health" in apis)
+            # 7.4 detect_lang 三态
+            djava = u / "dj"; (djava / "X.java").parent.mkdir(parents=True, exist_ok=True)
+            (djava / "X.java").write_text("class X {}", encoding="utf-8")
+            dpy = u / "dp"; dpy.mkdir(exist_ok=True); (dpy / "m.py").write_text("x=1", encoding="utf-8")
+            dnone = u / "dn"; dnone.mkdir(exist_ok=True)
+            check("detect_lang: .java → java", cg_mod.detect_lang(str(djava)) == "java")
+            check("detect_lang: .py → python", cg_mod.detect_lang(str(dpy)) == "python")
+            check("detect_lang: 空 → none", cg_mod.detect_lang(str(dnone)) == "none")
+            # 7.5 命名约定单一事实源（sct_ids）：生成侧与校验侧必须同源
+            check("api_test_filename", sct.api_test_filename("API-F003-001") == "test_api_001.py")
+            check("rule_test_func", sct.rule_test_func("BR-F003-001") == "test_br_001")
+            check("java_test_class_name", sct.java_test_class_name("com.demo.UpController") == "UpControllerTest")
+            check("scenario_test_func", sct.scenario_test_func("F003-1") == "test_sc_f003_1")
+            check("三态排序 BLOCK > UNPROVEN > PASS",
+                  sct.VERDICT_RANK["BLOCK"] > sct.VERDICT_RANK["UNPROVEN"] > sct.VERDICT_RANK["PASS"])
+            # 7.6 REAL_TESTS 兼容 pytest junitxml（根 testsuites 计数在子节点）
+            vg = _load_mod("sct_vg_units", "verification-gate.py")
+            sfd = u / "sf"; sfd.mkdir()
+            _w(sfd, "TEST-py.xml", '<testsuites><testsuite tests="3" failures="1" errors="0" skipped="0"/></testsuites>')
+            st, n, _d = vg.check_real_tests(str(sfd))
+            check("REAL_TESTS: pytest 格式计数=3 且 FAIL→BLOCK", n == 3 and st == "BLOCK")
+
     print("-" * 60)
     if failures:
         print(f"❌ {len(failures)} 项自测失败: {', '.join(failures)}")
         return 1
-    print("✅ 全部自测通过（golden / blocker / gate / anti-hollow / python / none 六档）")
+    print("✅ 全部自测通过（golden / blocker / gate / anti-hollow / python / none / units 七档）")
     return 0
 
 

@@ -207,7 +207,7 @@ def extract_test_coverage(test_root: Path) -> Dict[str, Set[str]]:
             coverage["java_tests"].add(m.group(1))
     for test_file in test_root.rglob("test_*.py"):
         # 从文件名提取（F-2 命名：test_api_001.py → 末段 001，与 SoT id API-F003-001 末段匹配）
-        m = re.search(r'test_api_([\w]+)\.py', test_file.name)
+        m = sct_ids.API_TEST_FILE_PAT.search(test_file.name)
         if m:
             coverage["apis"].add(m.group(1).lower())
         content = test_file.read_text(encoding="utf-8")
@@ -216,10 +216,10 @@ def extract_test_coverage(test_root: Path) -> Dict[str, Set[str]]:
             coverage["funcs"].add(f"{test_file.name}::{func}")
             if "br_" in func:
                 # F-5 命名：test_br_001 → br-001（与 SoT BR-F003-001 末段匹配）
-                rm = re.search(r'br_(\w+)', func)
+                rm = sct_ids.RULE_FUNC_PAT.search(func)
                 if rm:
                     coverage["rules"].add(f"br-{rm.group(1)}")
-            sm = re.match(r'test_sc_f(\d+)_(\d+)', func)
+            sm = sct_ids.SCENARIO_FUNC_PAT.match(func)
             if sm:
                 # test_sc_f001_1 → F001-1
                 coverage["scenarios"].add(f"F{sm.group(1)}-{sm.group(2)}")
@@ -371,7 +371,8 @@ def summarize_exec(results: Dict[str, str]) -> Tuple[int, int, int, int]:
 # 退出码：PASS=0 / BLOCK=1 / UNPROVEN=2（预检用户确认跳过仍为 3）。
 # =====================================================================
 
-VERDICT_ORDER = {"BLOCK": 3, "UNPROVEN": 2, "PASS": 1, "NOT_APPLICABLE": 0}
+# 三态排序统一引自 sct_ids.VERDICT_RANK（v2.5.1 单一事实源，与 verification-gate 一致）
+VERDICT_ORDER = sct_ids.VERDICT_RANK
 
 # =====================================================================
 # P0-4 Quality Profile：用档位替代硬编码的「90% 覆盖率」
@@ -790,13 +791,14 @@ def build_traceability_matrix(spec: dict, test_cov: Dict[str, Set[str]],
     for a in spec.get("apis", []):
         suffix = sct_ids.id_suffix(a["id"])
         has_test = suffix in test_cov.get("apis", set())
-        names = [f for f in funcs if f.startswith(f"test_api_{suffix}_")]
+        names = [f for f in funcs
+                 if f.startswith(sct_ids.api_test_func_prefix(a["id"]) + "_")]
         exe, ev = evidence_of(names, has_test)
         rows.append({
             "req": a.get("derived_from") or source_spec,
             "ac": a["id"], "kind": "API",
             "desc": f"{a.get('method', '')} {a.get('path', '')}".strip(),
-            "test": f"test_api_{suffix}.py" if has_test else "—",
+            "test": sct_ids.api_test_filename(a["id"]) if has_test else "—",
             "execution": exe, "evidence": ev,
         })
 
@@ -807,19 +809,17 @@ def build_traceability_matrix(spec: dict, test_cov: Dict[str, Set[str]],
         # 有 target 的规则生成 Java 单测 <Class>Test.java（区别于 Python test_br_*）
         target_cls = (r.get("target") or {}).get("class", "") \
             if isinstance(r.get("target"), dict) else ""
-        java_covered = False
-        if target_cls:
-            simple = target_cls.split(".")[-1]
-            java_covered = f"{simple}Test" in test_cov.get("java_tests", set())
+        java_cls_name = sct_ids.java_test_class_name(target_cls)
+        java_covered = bool(java_cls_name) and java_cls_name in test_cov.get("java_tests", set())
         has_test = java_covered \
             or any(f"br_{suffix}" in k for k in test_cov.get("rules", set())) \
             or func in funcs
         # junit 里 Java 单测按类名（UpControllerTest）记录；Python 按函数名
-        java_cls = f"{target_cls.split('.')[-1]}Test" if (target_cls and java_covered) else ""
+        java_cls = java_cls_name if java_covered else ""
         names = ([java_cls] if java_cls else []) + ([func] if not java_cls else [])
         exe, ev = evidence_of(names, has_test)
-        test_label = (f"{target_cls.split('.')[-1]}Test.java" if java_covered
-                      else (f"test_rules.py::{func}" if has_test else "—"))
+        test_label = (f"{java_cls_name}.java" if java_covered
+                      else (f"{sct_ids.RULES_FALLBACK_FILENAME}::{func}" if has_test else "—"))
         rows.append({
             "req": r.get("derived_from") or source_spec,
             "ac": r["id"], "kind": "RULE",
@@ -1158,8 +1158,28 @@ def render_test_report(spec: dict, issues: List[dict], stats: dict,
         L.append("> 未接入 CodeGraph，无系统级异常信息。")
     L.append("")
 
-    # ===== 6.4 缺陷汇总（执行失败 + 漂移 + 未实现，统一成缺陷清单供人工跟进）=====
-    L.append("### 6.4 缺陷汇总")
+    # ===== 6.4 绑定漂移（design 阶段 BINDING_DRIFT 遗留；v2.5.1 起进统一报告）=====
+    # 生成器在 design 阶段发现 SoT ↔ 代码公共契约的分歧（方法缺失/签名不匹配/缺输入/
+    # mock 未打桩）。这是"分歧是信号"原则的报告级落点：评审者在 testing.run 报告里
+    # 就能看到，不必回翻 design 的 stdout。不改变门禁结论（信号 ≠ 判决）。
+    binding_drifts = ((meta.get("codegen_meta") or {}).get("binding_drifts")) or []
+    L.append("### 6.4 绑定漂移（design 阶段遗留，需人工裁决）")
+    L.append("")
+    if binding_drifts:
+        L.append(f"> 共 {len(binding_drifts)} 处（testing.design 生成时发现）。"
+                 "每处都需人工裁决：改 SoT 或改代码——两种修正都必须追溯到需求。")
+        L.append("")
+        L.append("| 规则 | 目标 | 类型 | 说明 |")
+        L.append("|------|------|------|------|")
+        for d in binding_drifts:
+            L.append(f"| {d.get('rule', '')} | {d.get('class', '')}.{d.get('method', '')} "
+                     f"| {d.get('kind', '')} | {d.get('detail', '')} |")
+    else:
+        L.append("> 无（design 阶段未发现 SoT 与代码公共契约的绑定分歧）。")
+    L.append("")
+
+    # ===== 6.5 缺陷汇总（执行失败 + 漂移 + 未实现，统一成缺陷清单供人工跟进）=====
+    L.append("### 6.5 缺陷汇总")
     L.append("")
     defects: List[tuple] = []  # (缺陷类型, 关联对象, 说明)
     if junit:
@@ -1393,6 +1413,10 @@ def main():
         g = len(codegen_meta.get("global_exceptions") or [])
         print(f"CodeGraph: {'已接入（' + cg + '）' if cg else '未接入'}，"
               f"FIELD_DRIFT {n} 个，派生异常用例 {d} 个，系统级异常 {g} 个（将整合进测试报告）")
+        # v2.5.1：design 阶段绑定漂移进 run 摘要（报告 §6.4 同步）
+        bdn = len(codegen_meta.get("binding_drifts") or [])
+        if bdn:
+            print(f"⚠️  绑定漂移（design 阶段遗留）{bdn} 个——详见报告「6.4 绑定漂移」，需人工裁决 SoT 还是代码")
 
     # P0-4：Quality Profile 决定覆盖率门槛（在 meta 构造之前确定）
     profile = (args.profile or DEFAULT_PROFILE).lower()
@@ -1440,6 +1464,7 @@ def main():
             "source_spec": source_spec, "profile": profile,
             "coverage_target": coverage_target, "verdict": verdict,
             "gates": gates, "items": trace_rows,
+            "binding_drifts": (codegen_meta or {}).get("binding_drifts") or [],
         }
         tj = Path(args.trace_json)
         tj.parent.mkdir(parents=True, exist_ok=True)

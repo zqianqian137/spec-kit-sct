@@ -3,6 +3,37 @@
 All notable changes to the SCT extension are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.5.1] - 2026-09-05
+
+### Changed — 工程化收口（对照 v2.5 评估短板逐项落地）
+
+- **绑定漂移进 run 报告（报告级落点）**：`consistency-check.py` 此前对
+  `_codegen_meta.json` 的 `binding_drifts` 零消费——design 阶段发现的
+  SoT ↔ 代码分歧（METHOD_NOT_FOUND / SIGNATURE_MISMATCH / MISSING_INPUT /
+  MOCK_NOT_STUBBED）只在 design 的 stdout 出现。现进入 `testing.run`
+  统一报告**§6.4 绑定漂移**、终端摘要与 `--trace-json`（`binding_drifts` 字段），
+  评审者在最终报告即可裁决，不必回翻 design 输出。不改变门禁结论（信号 ≠ 判决）。
+- **命名约定单一事实源**：`sct_ids.py` 升级为生成侧与校验侧共用的命名/语义源——
+  新增 `java_test_class_name` / `api_test_func_prefix` / `API_TEST_FILE_PAT` /
+  `RULE_FUNC_PAT` / `SCENARIO_FUNC_PAT` / `RULES_FALLBACK_FILENAME` /
+  `PYTEST_UNIT_FILENAME` / `VERDICT_RANK`；codegen 与 consistency-check 的
+  18 处隐式命名耦合点改为引用 helpers（行为不变）。新增语言/emitter 时改约定只改一处。
+- **三态排序去重**：`consistency-check.VERDICT_ORDER` 与
+  `verification-gate._RANK` 两份重复定义统一为 `sct_ids.VERDICT_RANK`。
+
+### Added — self-test 第 7 档 units（函数级回归网）
+
+解析器/纯函数此前只有端到端覆盖，回改变更无回归保护。新增 16 项断言：
+cobertura `<line hits>` 行计数与增量匹配、jacoco counter、FastAPI/Flask/aiohttp
+路由提取、`detect_lang` 三态、sct_ids 命名约定、三态排序、REAL_TESTS 对 pytest
+junitxml 格式的兼容；并给 python emitter 产物加 `ast.parse` **语法守卫**
+（字符串拼接式 emitter 的高发缺陷类型）。
+
+### Docs
+
+- README 退出码表补 `3 = 缺前等待确认`（接口预检失败，agent 与用户确认后重跑
+  或 `--skip-api-tests`）；补 e2e 的 `PLAYWRIGHT_BASE_URL` env 契约。
+
 ## [2.5.0] - 2026-09-05
 
 ### Added — L1 语言中立：Python emitter + 非标准工程降级（触发条件达成：用户明确第二语言需求）

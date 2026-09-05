@@ -244,7 +244,7 @@ for a human reviewer:
 Install the released extension from its GitHub archive:
 
 ```bash
-specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.5.0.zip
+specify extension add sct --from https://github.com/zqianqian137/spec-kit-sct/archive/refs/tags/v2.5.1.zip
 ```
 
 Or install from a local checkout during development:
@@ -291,7 +291,17 @@ specify testing.run --spec specs/001/acceptance.yaml --code backend/src/main/jav
   --report specs/001/reports/test-report.md
 ```
 
-Exit code 0 = PASS · 1 = BLOCK · 2 = UNPROVEN. Anything other than 0 blocks the merge.
+Exit codes（内网 CI 按此编程）：
+
+| 退出码 | 含义 | 处置 |
+| --- | --- | --- |
+| `0` | **PASS** | 证据齐备，放行 |
+| `1` | **BLOCK** | 存在漏测/失败/手改/幻影，阻断合并 |
+| `2` | **UNPROVEN** | 证据不足（缺 junit/coverage/e2e 环境）——不冒充通过，补齐后重跑或人工确认 |
+| `3` | **缺前等待确认** | 接口测试预检失败（BASE_URL 不可达/token 未设）：agent 应与用户确认——起服务后重跑，或改用 `--skip-api-tests` 跳过接口层 |
+
+`e2e-runner.py` 遵循同一语义：已执行 `0/1`；环境缺失（未装 pytest-playwright / 浏览器）返回 `2`
+并给出精确缺失清单——用户选择不安装 = e2e 以 UNPROVEN 退出，不参与门禁。
 
 The `--ai` flag on `testing.plan` and `testing.run` requires `SILICONFLOW_API_KEY`  
 (optional). When the `codebase-memory-mcp` connector is connected, `testing.plan`  
@@ -396,7 +406,7 @@ fixes must trace back to the requirement — the test is the alarm, not the verd
   （pom/gradle/*.java → JUnit emitter；*.py/pyproject → pytest emitter；否则非标准工程只留静态断言层）。
 - **e2e 可选执行（v2.5）**：`python scripts/e2e-runner.py --specs e2e/auto_generated
   --out e2e/e2e-junit.xml`——环境齐备才跑，缺什么明确提示；用户不装则 e2e UNPROVEN 退出，
-  不参与门禁。
+  不参与门禁。specs 通过环境变量 `PLAYWRIGHT_BASE_URL` 获取被测前端地址（env 契约）。
 - **契约校验已命令级强制（v2.4）**：`testing.run`（consistency-check.py）入口内置
   `contract-validate`——坏契约直接 BLOCK(exit 1)，绕过命令直调脚本也拦得住；
   不再依赖"先跑 contract-validate"的约定。

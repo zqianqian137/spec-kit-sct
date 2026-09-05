@@ -43,11 +43,13 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
+import sct_ids
 import yaml
 
 PASS, BLOCK, UNPROVEN = "PASS", "BLOCK", "UNPROVEN"
 # 严重度排序：BLOCK 最严，UNPROVEN 次之（不静默当通过），PASS 最轻
-_RANK = {PASS: 0, UNPROVEN: 1, BLOCK: 2}
+# （v2.5.1 起引用 sct_ids.VERDICT_RANK 单一事实源，与 consistency-check 门禁一致）
+_RANK = sct_ids.VERDICT_RANK
 
 
 def _worst(statuses: list) -> str:

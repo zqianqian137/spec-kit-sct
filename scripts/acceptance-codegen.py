@@ -357,10 +357,9 @@ def gen_api_tests(apis: list, out_dir: Path, graph_index: dict = None,
             "service": (graph or {}).get("service", ""),
         }
         test_code = render_api_test(api, graph, base_url, global_exceptions)
-        # F-2 修复：取 ID 最后一节（API-001→001；API-F003-001→001），
-        # 避免同 feature 多 API 因 split('-')[1] 取到相同中段而互相覆盖
+        # F-2 修复：文件名走 sct_ids 命名约定（末段后缀），避免同 feature 多 API 互相覆盖
         api_suffix = sct_ids.id_suffix(api["id"])
-        file_name = f"test_api_{api_suffix}.py"
+        file_name = sct_ids.api_test_filename(api["id"])
         file_path = out_dir / file_name
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(test_code, encoding="utf-8")
@@ -925,7 +924,7 @@ def _render_java_test_class(rules: list, junit_version: str, class_info: dict = 
                 })
 
     pkg, cls_simple = _java_class_name(cls_full)
-    test_cls_name = cls_simple + "Test"
+    test_cls_name = sct_ids.java_test_class_name(cls_full)
     file_name = test_cls_name + ".java"
 
     if junit_version == "5":
@@ -1376,7 +1375,7 @@ def _gen_python_rule_fallbacks(rules: list, out_dir: Path,
                 L.append('                 "  推荐：在 SoT 的 rules[' + rule_ref + '] 增加 target.class/method + test_cases 以生成 Java 单元测试；\\n"')
                 L.append('                 "  或在 checks 字段声明代码证据（注解/方法/异常）。")')
     body = "\n".join(L) + "\n"
-    file_path = out_dir / "test_rules.py"
+    file_path = out_dir / sct_ids.RULES_FALLBACK_FILENAME
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(body, encoding="utf-8")
     generated.append(str(file_path))
@@ -1499,7 +1498,7 @@ def gen_pytest_unit_tests(rules: list, out_dir: Path, code_root: str = ".") -> t
                           f"请确认 target.class 包路径与 --code 根一致（改 SoT 或传对 --code）",
             })
 
-        body.append(f"def test_br_{suffix}():")
+        body.append(f"def {sct_ids.rule_test_func(rid)}():")
         body.append(f'    """[意图] {rid}: {rtext}')
         body.append("")
         body.append("    真相来源: acceptance.yaml#rules[" + rid + "].test_cases")
@@ -1566,7 +1565,7 @@ def gen_pytest_unit_tests(rules: list, out_dir: Path, code_root: str = ".") -> t
         return [], []
 
     out = "\n".join(header) + "\n\n" + "\n".join(body)
-    fp = out_dir / "test_unit_py.py"
+    fp = out_dir / sct_ids.PYTEST_UNIT_FILENAME
     fp.parent.mkdir(parents=True, exist_ok=True)
     fp.write_text(out, encoding="utf-8")
     generated.append(str(fp))
@@ -1613,7 +1612,7 @@ def gen_scenario_tests(features: list, out_dir: Path) -> list:
         feat_id = feat.get("id", "?")
         for sc in feat.get("acceptance_scenarios", []):
             sc_id = sc.get("id", "?")
-            func_name = "test_sc_" + sc_id.lower().replace("-", "_")
+            func_name = sct_ids.scenario_test_func(sc_id)
             body += f'''
 
 def {func_name}():
@@ -1698,9 +1697,9 @@ def gen_coverage_report(acceptance: dict, out_dir: Path, field_drifts: list = No
 |--------|--------|------|------|----------|--------|--------------|
 """
     for api in apis:
-        # F-2/F-3 修复：报告命名与 gen_api_tests 完全一致（取 [-1]）；用例数兼容两种 schema
+        # F-2/F-3 修复：报告命名与 gen_api_tests 完全一致（走 sct_ids 命名约定）
+        file_name = sct_ids.api_test_filename(api["id"])
         api_num = sct_ids.id_suffix(api["id"])
-        file_name = f"test_api_{api_num}.py"
         case_count = 0
         s_status, s_errs = split_api_response_schema(api)
         if s_status is not None:
